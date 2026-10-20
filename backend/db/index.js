@@ -1,4 +1,11 @@
 import pg from 'pg';
+import { Pool as NeonPool, Client as NeonClient } from '@neondatabase/serverless';
+
+// PG_OVER_WEBSOCKET=true swaps in Neon's pg-compatible WebSocket driver (port 443), for
+// networks that block outbound Postgres on 5432. Servers that can reach 5432 keep plain pg.
+// Read at call time, so it works however late .env is loaded.
+const overWebSocket = () => process.env.PG_OVER_WEBSOCKET === 'true';
+export const createClient = (options) => new (overWebSocket() ? NeonClient : pg.Client)(options);
 
 let pool = null;
 
@@ -8,7 +15,8 @@ export function getPool() {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set (see backend/.env.example)');
     }
-    pool = new pg.Pool({
+    const Pool = overWebSocket() ? NeonPool : pg.Pool;
+    pool = new Pool({
       connectionString,
       max: Number(process.env.PG_POOL_MAX) || 10
     });

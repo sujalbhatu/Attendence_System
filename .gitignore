@@ -9,3 +9,5 @@ __pycache__/
 *.log
 interview/
 interview_prep/
+.neon
+.env.local

@@ -8,6 +8,7 @@ if (!process.env.TEST_DATABASE_URL) {
   throw new Error('Set TEST_DATABASE_URL to an empty Postgres database (it is wiped by the tests)');
 }
 process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+process.env.DATABASE_URL_UNPOOLED = process.env.TEST_DATABASE_URL; // migrations use this one
 // config.js reads these once at import, so tests fix them here
 process.env.FACULTY_INVITE_CODE ??= 'test-invite-code';
 process.env.CORS_ORIGINS ??= 'https://rollone.example';

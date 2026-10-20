@@ -27,9 +27,20 @@ and point the server at it.
 In `backend/.env` (copy from `backend/.env.example`):
 
 ```env
-DATABASE_URL=postgresql://neondb_owner:...@ep-....neon.tech/neondb?sslmode=require
+DATABASE_URL=postgresql://neondb_owner:...@ep-...-pooler....neon.tech/neondb?sslmode=require
+DATABASE_URL_UNPOOLED=postgresql://neondb_owner:...@ep-.......neon.tech/neondb?sslmode=require
 JWT_SECRET=<run: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))">
 ```
+
+The app uses the pooled string (`-pooler` host). Migrations use the direct one,
+because they hold a session-level advisory lock that a transaction-mode pooler
+can't keep. With the Neon CLI linked (`neon init` / `neon link` in the repo root),
+`neon env pull` writes both to the root `.env.local`; copy them into `backend/.env`.
+
+If your network blocks outbound port 5432 (common on campus networks and some VPNs,
+showing up as `ECONNRESET` or a connect timeout), set `PG_OVER_WEBSOCKET=true` in
+`backend/.env`. The backend then uses Neon's pg-compatible WebSocket driver over
+port 443. Keep it off on the server, where plain `pg` over TCP is faster.
 
 Start the server once (`npm start`). It creates all the tables by itself
 (you'll see `[MIGRATE] Applied 001_initial.sql`).
