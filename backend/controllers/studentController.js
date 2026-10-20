@@ -21,7 +21,8 @@ export const getStudents = async (req, res) => {
 
 export const getStudentByRoll = async (req, res) => {
   try {
-    const student = await Student.findOne({ rollNumber: req.params.rollNumber.toUpperCase() });
+    const student = await Student.findOne({ rollNumber: String(req.params.rollNumber).toUpperCase() })
+      .select('rollNumber name department batch section isEnrolled enrolledAt');
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
     }
@@ -82,6 +83,7 @@ export const enrollFace = async (req, res) => {
     student.faceEmbedding = embedding;
     student.isEnrolled = true;
     student.enrolledAt = new Date();
+    student.enrollmentSource = 'FACULTY';
     await student.save();
 
     // Clean up temporary uploads

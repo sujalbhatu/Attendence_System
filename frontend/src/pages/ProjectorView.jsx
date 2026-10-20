@@ -53,58 +53,78 @@ export default function ProjectorView() {
       });
   }, [sessionId]);
 
-  // Connect to SSE QR Stream
+  // Connect to SSE QR Stream.
+  // EventSource cannot send an Authorization header, so we first exchange the
+  // faculty login for a short-lived projector token scoped to this one session.
   useEffect(() => {
     if (!sessionId) return;
+    let eventSource = null;
+    let cancelled = false;
 
-    const eventSource = new EventSource(`/api/sessions/${sessionId}/qr-feed`);
+    api.post(`/sessions/${sessionId}/projector-token`)
+      .then((res) => {
+        if (cancelled) return;
+        eventSource = new EventSource(
+          `/api/sessions/${sessionId}/qr-feed?pt=${encodeURIComponent(res.data.projectorToken)}`
+        );
 
-    eventSource.onmessage = async (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setTokenData(data);
-        if (data.requirePin !== undefined) {
-          setSession((prev) => prev ? { ...prev, requirePin: data.requirePin } : prev);
-        }
+        eventSource.onmessage = async (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            setTokenData(data);
+            if (data.requirePin !== undefined) {
+              setSession((prev) => prev ? { ...prev, requirePin: data.requirePin } : prev);
+            }
 
-        // Encode QR payload with token, session, timestamp, and requirePin flag
-        const qrPayload = JSON.stringify({
-          s: data.sessionId,
-          t: data.token,
-          ts: data.timestamp,
-          rp: !!data.requirePin
-        });
+            // Encode QR payload with token, session, timestamp, and requirePin flag
+            const qrPayload = JSON.stringify({
+              s: data.sessionId,
+              t: data.token,
+              ts: data.timestamp,
+              rp: !!data.requirePin
+            });
 
-        // Generate clean high-contrast QR SVG/DataURL
-        const url = await QRCode.toDataURL(qrPayload, {
-          width: 380,
-          margin: 1,
-          color: {
-            dark: '#000000',
-            light: '#ffffff'
+            // Generate clean high-contrast QR SVG/DataURL
+            const url = await QRCode.toDataURL(qrPayload, {
+              width: 380,
+              margin: 1,
+              color: {
+                dark: '#000000',
+                light: '#ffffff'
+              }
+            });
+            setQrDataUrl(url);
+          } catch (err) {
+            console.error('QR generation error:', err);
           }
-        });
-        setQrDataUrl(url);
-      } catch (err) {
-        console.error('QR generation error:', err);
-      }
-    };
+        };
 
-    eventSource.onerror = () => {
-      console.warn('SSE connection interrupted, retrying...');
-    };
+        eventSource.onerror = () => {
+          console.warn('SSE connection interrupted, retrying...');
+        };
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(
+          err.response?.status === 401
+            ? 'Log in as the faculty who created this session to open the projector.'
+            : err.response?.data?.error || 'Could not start the projector feed'
+        );
+      });
 
     return () => {
-      eventSource.close();
+      cancelled = true;
+      if (eventSource) eventSource.close();
     };
   }, [sessionId]);
 
   // Smooth circular timer animation (4000ms loop)
   useEffect(() => {
+    // Pushes arrive at each rotation boundary; count down the time this code has left.
     const startTime = Date.now();
+    const windowMs = tokenData.expiresInMs || 4000;
     const interval = setInterval(() => {
-      const elapsed = (Date.now() - startTime) % 4000;
-      const remaining = 4000 - elapsed;
+      const remaining = Math.max(0, windowMs - (Date.now() - startTime));
       setProgressPercent((remaining / 4000) * 100);
     }, 50);
 

@@ -1,26 +1,45 @@
-﻿# CampusTrack — University-Scale O(1) Biometric Attendance Platform
+# RollOne (CampusTrack) — Biometric Attendance Platform
 
-A production-grade, $O(1)$ distributed biometric attendance platform designed for college lecture halls. Handles peak 10:00 AM morning concurrency (3,000+ students across 50 classrooms) on inexpensive standard campus hardware without cloud GPU clusters.
+Phone-based lecture attendance: the projector shows a rotating QR code, students check in from their phones, and a face-verification service with blink liveness confirms who they are.
 
-## Architecture
+## How a check-in works
 
-* **Phase 1: Rapid Presence Claim (< 2ms):**
-  * Teacher projector displays a 4-second rotating HMAC-SHA256 QR code + Line-of-Sight PIN.
-  * Student phone scans and transmits a 0.5 KB claim payload (`{ rollNumber, token, gps }`).
-  * Server validates token and geofence, returning a temporary claim reservation ticket.
-* **Phase 2: Decoupled Biometric Verification:**
-  * Staggered upload slot assignment flattens the thundering herd.
-  * Student performs front-camera active blink verification.
-  * Vectorized PyTorch FaceNet (InceptionResnetV1) worker pool executes batch matching against 512-d embeddings.
-  * MongoDB atomic commit enforces 1 attendance record per student per session (`unique: { sessionId: 1, studentId: 1 }`).
+1. **Projector.** The faculty opens the projector view. It exchanges the faculty login for a short-lived projector token and opens a Server-Sent Events stream. Every 4 s, aligned to the rotation boundary, the server pushes `HMAC-SHA256(sessionSecret, sessionId:timeStep)` — the first 8 hex characters are the QR token, the next ones give a 1–9 Line-of-Sight PIN.
+2. **Claim (`POST /api/attendance/claim`).** The student is logged in (JWT), so identity never comes from a typed roll number. The scanned token is checked at scan time: it is valid only inside its own 4 s window, plus `TOKEN_GRACE_MS` (default 1.5 s) after rotation for network delay. Then the geofence (Haversine, 35 m) and the "already marked" check run, and the server returns a claim ticket.
+3. **PIN (`POST /api/attendance/claim/pin`, only if the session requires it).** A separate step, so tapping the PIN doesn't have to fit inside the token window. It must match the digit on screen now; 2 wrong attempts destroy the claim.
+4. **Verify (`POST /api/attendance/verify`).** After a staggered delay (25 students per 1.5 s slot + jitter), the phone uploads a burst of 320×320 JPEG frames. The Python service checks blink liveness (always on — the client cannot turn it off), computes a FaceNet embedding and compares it with the enrolled one (cosine ≥ 0.65).
+5. **Commit.** A compound unique index on (sessionId, studentId) makes marking idempotent under concurrent retries.
 
-## Services & Ports
+## Security model
 
-* **Frontend:** `https://localhost:5173` / `https://<LAN-IP>:5173` (Vite + React 19 + HTTPS)
-* **Backend Gateway:** `http://localhost:3001` (Node.js + Express + MongoDB Atlas)
-* **ML Biometric Engine:** `http://localhost:5001` (Python 3.11 + PyTorch + FaceNet)
+- Session secrets are `select: false` and never leave the server; the QR feed needs a projector token scoped to one session.
+- Student passwords default to the roll number only until first login, when a new password is required before marking attendance.
+- Face templates and password hashes are `select: false` and never returned by the API.
+- Faculty sign-up is invite-only (`FACULTY_INVITE_CODE`); the role is always `faculty`.
+- `JWT_SECRET` is required — the server refuses to start without it. Tokens are accepted only in the `Authorization` header.
+- Per-account rate limits on claim/PIN/verify and on logins (students share one campus IP, so limits are not per-IP).
+- First-scan self-enrollment (when `ALLOW_SELF_ENROLLMENT=true`) records attendance as `FLAGGED` for faculty review.
 
-## Default Faculty Credentials
+## Services
 
-* **Email:** `faculty@campus.edu`
-* **Password:** `password123`
+| Service | Stack | Port |
+| --- | --- | --- |
+| Frontend | React 19 + Vite | 5173 (dev) |
+| API gateway | Node.js + Express + MongoDB | 3001 |
+| ML engine | Python + PyTorch FaceNet (InceptionResnetV1) | 5001 |
+
+## Setup
+
+```bash
+cd backend && cp .env.example .env   # fill in MONGODB_URI and JWT_SECRET
+npm install && npm start
+npm test                             # token window, PIN, claim/verify flow, rate limits (Node 22.3+)
+```
+
+For a local demo database, set `SEED_DEMO=true` (development only); the demo faculty password is printed once in the server log.
+
+## After deploying these security fixes
+
+1. Set a new random `JWT_SECRET` (this logs everyone out, including any old stolen tokens).
+2. Change the old demo faculty password: `npm run set-faculty-password -- faculty@campus.edu "<new password>"`.
+3. Set `FACULTY_INVITE_CODE` if you want faculty sign-up to stay open.

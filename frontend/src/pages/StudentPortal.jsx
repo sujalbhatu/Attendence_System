@@ -39,12 +39,14 @@ export default function StudentPortal() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
 
   useEffect(() => {
-    if (token) {
+    if (token && !mustChangePassword) {
       fetchCourses();
     }
-  }, [token]);
+  }, [token, mustChangePassword]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -56,14 +58,40 @@ export default function StudentPortal() {
         rollNumber: cleanRoll, 
         password 
       });
-      const { token: receivedToken, student: studentData } = res.data;
+      const { token: receivedToken, student: studentData, mustChangePassword: needsNew } = res.data;
       localStorage.setItem('rollone-student-token', receivedToken);
       localStorage.setItem('rollone-student-data', JSON.stringify(studentData));
+      setMustChangePassword(!!needsNew);
       setToken(receivedToken);
       setStudent(studentData);
+      if (!needsNew) setPassword('');
       setLoading(false);
     } catch (err) {
       setError(err.response?.data?.error || 'Invalid roll number or password');
+      setLoading(false);
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.post(
+        '/student-portal/change-password',
+        { currentPassword: password, newPassword },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      localStorage.setItem('rollone-student-token', res.data.token);
+      localStorage.setItem('rollone-student-data', JSON.stringify(res.data.student));
+      setStudent(res.data.student);
+      setPassword('');
+      setNewPassword('');
+      setMustChangePassword(false);
+      setToken(res.data.token);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not update password');
+    } finally {
       setLoading(false);
     }
   };
@@ -73,6 +101,7 @@ export default function StudentPortal() {
     localStorage.removeItem('rollone-student-data');
     setToken(null);
     setStudent(null);
+    setMustChangePassword(false);
     setCourses([]);
     setExpandedCourse(null);
     setSessions([]);
@@ -88,6 +117,8 @@ export default function StudentPortal() {
     } catch (err) {
       if (err.response?.status === 401) {
         handleLogout();
+      } else if (err.response?.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+        setMustChangePassword(true);
       }
     } finally {
       setLoadingCourses(false);
@@ -140,8 +171,8 @@ export default function StudentPortal() {
     );
   };
 
-  // 1. Login Screen
-  if (!token) {
+  // 1. Login Screen (also used for the forced password change)
+  if (!token || mustChangePassword) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
         <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '2.5rem 2rem' }}>
@@ -176,46 +207,83 @@ export default function StudentPortal() {
             </div>
           )}
 
-          <form onSubmit={handleLogin}>
-            <div className="form-group">
-              <label className="form-label">College Roll Number</label>
-              <div style={{ position: 'relative' }}>
-                <User size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input 
-                  type="text" 
-                  className="form-input mono" 
-                  style={{ paddingLeft: '2.5rem', textTransform: 'uppercase' }} 
-                  placeholder="e.g. 2023UGCS042"
-                  value={rollNumber} 
-                  onChange={e => setRollNumber(e.target.value)} 
-                  required 
+          {mustChangePassword ? (
+            <form onSubmit={handleChangePassword}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                Your password is still your roll number, which anyone could guess. Set a new one to continue.
+              </div>
+              <div className="form-group">
+                <label className="form-label">Current Password</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
                 />
               </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <div style={{ position: 'relative' }}>
-                <Lock size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input 
-                  type="password" 
-                  className="form-input" 
-                  style={{ paddingLeft: '2.5rem' }} 
-                  placeholder="Default: lowercase roll number"
-                  value={password} 
-                  onChange={e => setPassword(e.target.value)} 
-                  required 
+              <div className="form-group">
+                <label className="form-label">New Password (min 8 characters)</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
                 />
               </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                💡 Default password is your roll number in lowercase (e.g. <code>2023ugcs042</code>)
+              <button type="submit" className="btn btn-emerald" style={{ width: '100%', marginTop: '1.25rem', padding: '0.75rem' }} disabled={loading}>
+                {loading ? 'Saving...' : 'Save New Password'}
+              </button>
+              <button type="button" onClick={handleLogout} className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem' }}>
+                Use a different account
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label className="form-label">College Roll Number</label>
+                <div style={{ position: 'relative' }}>
+                  <User size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input 
+                    type="text" 
+                    className="form-input mono" 
+                    style={{ paddingLeft: '2.5rem', textTransform: 'uppercase' }} 
+                    placeholder="e.g. 2023UGCS042"
+                    value={rollNumber} 
+                    onChange={e => setRollNumber(e.target.value)} 
+                    required 
+                  />
+                </div>
               </div>
-            </div>
 
-            <button type="submit" className="btn btn-emerald" style={{ width: '100%', marginTop: '1.25rem', padding: '0.75rem' }} disabled={loading}>
-              {loading ? 'Signing In...' : 'Sign In to Portal'}
-            </button>
-          </form>
+              <div className="form-group">
+                <label className="form-label">Password</label>
+                <div style={{ position: 'relative' }}>
+                  <Lock size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input 
+                    type="password" 
+                    className="form-input" 
+                    style={{ paddingLeft: '2.5rem' }} 
+                    placeholder="Default: lowercase roll number"
+                    value={password} 
+                    onChange={e => setPassword(e.target.value)} 
+                    required 
+                  />
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  First login: your password is your roll number in lowercase. You will be asked to change it.
+                </div>
+              </div>
+
+              <button type="submit" className="btn btn-emerald" style={{ width: '100%', marginTop: '1.25rem', padding: '0.75rem' }} disabled={loading}>
+                {loading ? 'Signing In...' : 'Sign In to Portal'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     );

@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 dist/
 uploads/*
 !uploads/.gitkeep
@@ -7,3 +7,5 @@ __pycache__/
 .env
 .DS_Store
 *.log
+interview/
+interview_prep/

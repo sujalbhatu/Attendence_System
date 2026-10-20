@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import { CORS_ORIGINS, IS_PROD, SEED_DEMO } from './config.js'; // loads .env and fails fast on missing secrets
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
@@ -9,6 +9,7 @@ import sessionRoutes from './routes/sessions.js';
 import attendanceRoutes from './routes/attendance.js';
 import courseRoutes from './routes/courses.js';
 import studentPortalRoutes from './routes/studentPortal.js';
+import crypto from 'crypto';
 import User from './models/User.js';
 import Classroom from './models/Classroom.js';
 import Course from './models/Course.js';
@@ -19,18 +20,32 @@ import Student from './models/Student.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Behind Nginx: trust the first proxy so req.ip is the real client IP (used by rate limits).
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
 // Middlewares
+// The React app is served from the same origin as /api (Nginx in production, the Vite
+// proxy in development), so cross-origin access is only granted to listed origins.
 app.use(cors({
-  origin: '*',
+  origin: CORS_ORIGINS.length ? CORS_ORIGINS : false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
-// Request logging in dev
+// Basic security headers (Nginx can add more, e.g. HSTS).
 app.use((req, res, next) => {
-  if (req.method !== 'OPTIONS') {
-    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  next();
+});
+
+// Request logging in dev (query strings are dropped so tokens never reach logs)
+app.use((req, res, next) => {
+  if (!IS_PROD && req.method !== 'OPTIONS') {
+    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.path}`);
   }
   next();
 });
@@ -54,21 +69,23 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/student-portal', studentPortalRoutes);
 
-// Seed default faculty & sample classroom
+// Seed demo faculty, classroom and courses — development only, and only with SEED_DEMO=true.
+// The demo password comes from SEED_FACULTY_PASSWORD or is generated and printed once.
 async function seedDefaults() {
   try {
     let facultyId = null;
     const userCount = await User.countDocuments();
     if (userCount === 0) {
+      const seedPassword = process.env.SEED_FACULTY_PASSWORD || crypto.randomBytes(9).toString('base64url');
       const user = await User.create({
         name: 'Dr. Rajesh Sharma',
         email: 'faculty@campus.edu',
-        password: 'password123',
+        password: seedPassword,
         role: 'faculty',
         department: 'Computer Science & Engineering'
       });
       facultyId = user._id;
-      console.log('[SEED] Created default faculty account: faculty@campus.edu / password123');
+      console.log(`[SEED] Created demo faculty account: faculty@campus.edu / ${seedPassword}`);
     } else {
       const user = await User.findOne({ email: 'faculty@campus.edu' });
       if (user) facultyId = user._id;
@@ -145,7 +162,7 @@ mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log('[INFO] Connected to MongoDB Atlas (campustrack)');
-    await seedDefaults();
+    if (SEED_DEMO) await seedDefaults();
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`[READY] CampusTrack Gateway listening on http://0.0.0.0:${PORT}`);
     });

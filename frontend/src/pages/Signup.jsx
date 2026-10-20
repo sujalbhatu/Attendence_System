@@ -13,6 +13,7 @@ export default function Signup() {
   const [department, setDepartment] = useState('Computer Science & Engineering');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [inviteCode, setInviteCode] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -20,7 +21,7 @@ export default function Signup() {
     setError('');
 
     try {
-      const res = await api.post('/auth/register', { name, email, password, department, role: 'faculty' });
+      const res = await api.post('/auth/register', { name, email, password, department, inviteCode });
       localStorage.setItem('campustrack_jwt', res.data.token);
       await login(email, password);
       navigate('/dashboard');
@@ -92,6 +93,18 @@ export default function Signup() {
               value={department} 
               onChange={(e) => setDepartment(e.target.value)}
               className="form-input"
+              required 
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Faculty Invite Code</label>
+            <input 
+              type="text" 
+              value={inviteCode} 
+              onChange={(e) => setInviteCode(e.target.value)}
+              className="form-input"
+              placeholder="Provided by your administrator"
               required 
             />
           </div>

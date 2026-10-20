@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import api from '../api/client';
+import {
+  loadStudentToken,
+  loadStudentData,
+  saveStudentSession,
+  clearStudentSession,
+  studentAuthHeaders
+} from '../api/studentSession';
 import { 
   Camera, 
   CheckCircle2, 
@@ -16,12 +23,24 @@ import {
 } from 'lucide-react';
 
 export default function StudentScanner() {
-  // Step: 'INIT' | 'SCANNING_QR' | 'CLAIM_CONFIRMED' | 'FACE_VERIFY' | 'SUCCESS' | 'ERROR'
-  const [step, setStep] = useState('INIT');
-  
-  // Student & Location State
-  const [rollNumber, setRollNumber] = useState(() => localStorage.getItem('campustrack_roll') || '');
-  const [gps, setGps] = useState(null);
+  // Step: 'LOGIN' | 'SET_PASSWORD' | 'INIT' | 'SCANNING_QR' | 'ENTER_PIN' | 'CLAIM_CONFIRMED' | 'FACE_VERIFY' | 'SUCCESS' | 'ERROR'
+  const [step, setStep] = useState(() => (loadStudentToken() ? 'INIT' : 'LOGIN'));
+
+  // Student identity comes from their login token, never from a typed roll number
+  const [studentToken, setStudentToken] = useState(() => loadStudentToken());
+  const [student, setStudent] = useState(() => loadStudentData());
+  const [loginRoll, setLoginRoll] = useState(() => localStorage.getItem('campustrack_roll') || '');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const rollNumber = student?.rollNumber || '';
+
+  // Location State (gpsRef keeps the latest fix available to the QR callback)
+  const [gps, setGpsState] = useState(null);
+  const gpsRef = useRef(null);
+  const setGps = (value) => {
+    gpsRef.current = value;
+    setGpsState(value);
+  };
   const [gpsError, setGpsError] = useState(null);
   const [isGettingGps, setIsGettingGps] = useState(false);
 
@@ -70,13 +89,94 @@ export default function StudentScanner() {
     );
   };
 
+  // Student login / forced password change
+  const handleStudentLogin = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setErrorMessage('');
+    try {
+      const res = await api.post('/student-portal/login', {
+        rollNumber: loginRoll.trim().toUpperCase(),
+        password: loginPassword
+      });
+      saveStudentSession(res.data.token, res.data.student);
+      setStudentToken(res.data.token);
+      setStudent(res.data.student);
+      localStorage.setItem('campustrack_roll', res.data.student.rollNumber);
+      if (res.data.mustChangePassword) {
+        setStep('SET_PASSWORD');
+      } else {
+        setLoginPassword('');
+        setStep('INIT');
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.error || 'Login failed');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setErrorMessage('');
+    try {
+      const res = await api.post(
+        '/student-portal/change-password',
+        { currentPassword: loginPassword, newPassword },
+        { headers: studentAuthHeaders(studentToken) }
+      );
+      saveStudentSession(res.data.token, res.data.student);
+      setStudentToken(res.data.token);
+      setStudent(res.data.student);
+      setLoginPassword('');
+      setNewPassword('');
+      setStep('INIT');
+    } catch (err) {
+      if (err.response?.status === 401 && err.response?.data?.code === 'LOGIN_REQUIRED') {
+        handleLogout();
+        setErrorMessage('Session expired. Please log in again.');
+      } else {
+        setErrorMessage(err.response?.data?.error || 'Could not update password');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogout = () => {
+    stopQrScanner();
+    clearStudentSession();
+    setStudentToken(null);
+    setStudent(null);
+    setLoginPassword('');
+    setStep('LOGIN');
+  };
+
+  // Returns true if the error was an auth problem and has been handled.
+  const handleAuthError = (err) => {
+    const status = err.response?.status;
+    const code = err.response?.data?.code;
+    if (status === 401) {
+      handleLogout();
+      setErrorMessage('Please log in again.');
+      return true;
+    }
+    if (code === 'PASSWORD_CHANGE_REQUIRED') {
+      setErrorMessage(err.response.data.error);
+      setStep('SET_PASSWORD');
+      return true;
+    }
+    return false;
+  };
+
   // 2. Start Rear Camera QR Scanner
   const startQrScanner = async () => {
-    if (!rollNumber.trim()) {
-      alert('Please enter your Student Roll Number first');
+    if (!studentToken) {
+      setStep('LOGIN');
       return;
     }
-    localStorage.setItem('campustrack_roll', rollNumber.trim().toUpperCase());
+    setErrorMessage('');
     setStep('SCANNING_QR');
 
     // Slight delay to allow DOM element to render
@@ -120,13 +220,9 @@ export default function StudentScanner() {
       setSelectedPin(null);
       setErrorMessage('');
 
-      if (payload.rp === true) {
-        // Strict Mode: show 3x3 Line-of-Sight PIN Keypad
-        setStep('ENTER_PIN');
-      } else {
-        // Fast Mode: teacher is presenting on phone/laptop podium, bypass PIN!
-        executeClaim(payload, null);
-      }
+      // The token is checked the moment it is scanned. If the session uses the
+      // Line-of-Sight PIN, the server answers PIN_REQUIRED and the keypad opens.
+      executeClaim(payload);
     } catch (err) {
       // Fallback: If raw pipe string e.g. "CS301|sessionId|token|ts|requirePin"
       const parts = text.split('|');
@@ -135,11 +231,7 @@ export default function StudentScanner() {
         setScannedData(payload);
         setSelectedPin(null);
         setErrorMessage('');
-        if (payload.rp) {
-          setStep('ENTER_PIN');
-        } else {
-          executeClaim(payload, null);
-        }
+        executeClaim(payload);
       } else {
         setErrorMessage('Unrecognized QR code format. Please scan the official projector code.');
         setStep('ERROR');
@@ -147,42 +239,71 @@ export default function StudentScanner() {
     }
   };
 
-  const handlePinSelected = (digit) => {
-    setSelectedPin(digit);
-    executeClaim(scannedData, digit);
+  const beginStagger = (data) => {
+    setClaimTicket(data.claimTicket);
+    setStaggerDelay(data.assignedDelayMs || 0);
+    setStep('CLAIM_CONFIRMED');
+
+    // Countdown before opening front camera
+    const delayMs = data.assignedDelayMs || 1000;
+    setTimeout(() => {
+      startFaceVerification();
+    }, delayMs);
   };
 
-  // 4. Phase 1: Rapid Presence Claim (< 2ms) with verified Line-of-Sight PIN
-  const executeClaim = async (payload, pinToUse = selectedPin) => {
+  // 4. Phase 1: Presence claim — the scanned token is verified immediately
+  const executeClaim = async (payload) => {
     setIsSubmitting(true);
     setErrorMessage('');
 
     try {
-      const res = await api.post('/attendance/claim', {
-        sessionId: payload.s,
-        rollNumber: rollNumber.trim().toUpperCase(),
-        scannedToken: payload.t,
-        candidatePin: pinToUse,
-        clientGps: gps
-      });
+      const res = await api.post(
+        '/attendance/claim',
+        {
+          sessionId: payload.s,
+          scannedToken: payload.t,
+          clientGps: gpsRef.current
+        },
+        { headers: studentAuthHeaders(studentToken) }
+      );
 
-      setClaimTicket(res.data.claimTicket);
-      setStaggerDelay(res.data.assignedDelayMs || 0);
-      setStep('CLAIM_CONFIRMED');
-
-      // Countdown before opening front camera
-      const delayMs = res.data.assignedDelayMs || 1000;
-      setTimeout(() => {
-        startFaceVerification();
-      }, delayMs);
-
-    } catch (err) {
-      const errCode = err.response?.data?.code;
-      const errMsg = err.response?.data?.error || 'Claim rejected';
-      if (errCode === 'PIN_MISMATCH' || errCode === 'PIN_REQUIRED') {
+      if (res.data.status === 'PIN_REQUIRED') {
+        setClaimTicket(res.data.claimTicket);
         setSelectedPin(null);
-        setErrorMessage(errMsg);
         setStep('ENTER_PIN');
+        return;
+      }
+      beginStagger(res.data);
+    } catch (err) {
+      if (handleAuthError(err)) return;
+      setErrorMessage(err.response?.data?.error || 'Claim rejected');
+      setStep('ERROR');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 4b. Line-of-Sight PIN — sent as a second step so it does not race the 4 s token
+  const handlePinSelected = async (digit) => {
+    setSelectedPin(digit);
+    setIsSubmitting(true);
+    setErrorMessage('');
+
+    try {
+      const res = await api.post(
+        '/attendance/claim/pin',
+        { claimTicket, pin: digit },
+        { headers: studentAuthHeaders(studentToken) }
+      );
+      beginStagger(res.data);
+    } catch (err) {
+      if (handleAuthError(err)) return;
+      const errCode = err.response?.data?.code;
+      const errMsg = err.response?.data?.error || 'PIN rejected';
+      if (errCode === 'PIN_MISMATCH' || errCode === 'PIN_REQUIRED') {
+        const left = err.response?.data?.attemptsLeft;
+        setSelectedPin(null);
+        setErrorMessage(left ? `${errMsg} (${left} attempt${left === 1 ? '' : 's'} left)` : errMsg);
       } else {
         setErrorMessage(errMsg);
         setStep('ERROR');
@@ -252,19 +373,19 @@ export default function StudentScanner() {
     // Submit to Phase 2 verify endpoint
     const formData = new FormData();
     formData.append('claimTicket', claimTicket);
-    formData.append('requireLiveness', 'true');
     frames.forEach((blob, idx) => {
       formData.append('images', blob, `frame_${idx}.jpg`);
     });
 
     try {
       const res = await api.post('/attendance/verify', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { ...studentAuthHeaders(studentToken), 'Content-Type': 'multipart/form-data' }
       });
 
       setVerificationResult(res.data);
       setStep('SUCCESS');
     } catch (err) {
+      if (handleAuthError(err)) return;
       setErrorMessage(err.response?.data?.error || 'Biometric verification failed');
       setStep('ERROR');
     } finally {
@@ -307,19 +428,100 @@ export default function StudentScanner() {
         </button>
       </div>
 
-      {/* STEP 1: INITIAL ROLL NUMBER & START SCAN */}
-      {step === 'INIT' && (
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      {/* STEP 0: STUDENT LOGIN */}
+      {step === 'LOGIN' && (
+        <form onSubmit={handleStudentLogin} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 700 }}>Log in to mark attendance</div>
+          {errorMessage && (
+            <div style={{ color: 'var(--accent-red)', fontSize: '0.82rem', fontWeight: 600 }}>{errorMessage}</div>
+          )}
           <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Your Student Roll Number</label>
-            <input 
+            <label className="form-label">Roll Number</label>
+            <input
               type="text"
               placeholder="e.g. 2023UGCS042"
-              value={rollNumber}
-              onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
+              value={loginRoll}
+              onChange={(e) => setLoginRoll(e.target.value.toUpperCase())}
               className="form-input mono"
-              style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '1px', textAlign: 'center' }}
+              autoComplete="username"
+              required
+              style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '1px', textAlign: 'center' }}
             />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Password</label>
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              className="form-input"
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <button type="submit" disabled={isSubmitting} className="btn btn-emerald" style={{ padding: '0.8rem' }}>
+            {isSubmitting ? 'Logging in...' : 'Log In'}
+          </button>
+          <div style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            First time? Your password is your roll number in lower case. You will be asked to change it.
+          </div>
+        </form>
+      )}
+
+      {/* STEP 0.5: FORCED PASSWORD CHANGE */}
+      {step === 'SET_PASSWORD' && (
+        <form onSubmit={handleSetPassword} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 700 }}>Set a new password</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            Your current password is your roll number, which anyone could guess. Choose a new one (at least 8 characters).
+          </div>
+          {errorMessage && (
+            <div style={{ color: 'var(--accent-red)', fontSize: '0.82rem', fontWeight: 600 }}>{errorMessage}</div>
+          )}
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Current Password</label>
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              className="form-input"
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">New Password</label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="form-input"
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+          </div>
+          <button type="submit" disabled={isSubmitting} className="btn btn-emerald" style={{ padding: '0.8rem' }}>
+            {isSubmitting ? 'Saving...' : 'Save Password'}
+          </button>
+          <button type="button" onClick={handleLogout} className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>
+            Use a different account
+          </button>
+        </form>
+      )}
+
+      {/* STEP 1: LOGGED IN — START SCAN */}
+      {step === 'INIT' && (
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Logged in as</div>
+              <div style={{ fontWeight: 700 }}>{student?.name || 'Student'}</div>
+              <div className="mono" style={{ fontSize: '0.85rem', color: 'var(--accent-cyan)' }}>{rollNumber}</div>
+            </div>
+            <button onClick={handleLogout} className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.78rem' }}>
+              Log out
+            </button>
           </div>
 
           <button onClick={startQrScanner} className="btn btn-emerald" style={{ padding: '0.85rem', fontSize: '1rem' }}>
@@ -535,7 +737,10 @@ export default function StudentScanner() {
           <div style={{ background: 'var(--bg-main)', border: '1px solid var(--border-subtle)', borderRadius: '12px', padding: '1rem', marginTop: '1.25rem', textAlign: 'left', fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             <div>Roll Number: <strong className="mono" style={{ color: 'var(--accent-cyan)' }}>{rollNumber}</strong></div>
             <div>Student Name: <strong style={{ color: 'var(--text-primary)' }}>{verificationResult?.student?.name || 'Verified Student'}</strong></div>
-            <div>Match Confidence: <strong style={{ color: 'var(--accent-emerald)' }}>{((verificationResult?.metrics?.similarity ?? 0.92) * 100).toFixed(1)}%</strong></div>
+            <div>Match Confidence: <strong style={{ color: 'var(--accent-emerald)' }}>{verificationResult?.metrics?.similarity != null ? `${(verificationResult.metrics.similarity * 100).toFixed(1)}%` : 'First scan, face enrolled'}</strong></div>
+            {verificationResult?.status === 'FLAGGED' && (
+              <div style={{ color: 'var(--accent-amber)' }}>Your faculty will confirm your enrolled face.</div>
+            )}
             <div>Timestamp: <strong style={{ color: 'var(--text-primary)' }}>{new Date().toLocaleTimeString()}</strong></div>
           </div>
 
