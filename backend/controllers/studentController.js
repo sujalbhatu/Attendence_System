@@ -1,5 +1,14 @@
 import crypto from 'crypto';
-import Student from '../models/Student.js';
+import { UNIQUE_VIOLATION } from '../db/index.js';
+import {
+  listStudents,
+  findStudentById,
+  findStudentByRoll,
+  createStudent as insertStudent,
+  setStudentPassword,
+  enrollFaceEmbedding,
+  deleteStudent as removeStudent
+} from '../repositories/students.js';
 import axios from 'axios';
 import FormData from 'form-data';
 import fs from 'fs';
@@ -15,11 +24,7 @@ const generateTemporaryPassword = () => {
 export const getStudents = async (req, res) => {
   try {
     const { department, batch } = req.query;
-    const filter = {};
-    if (department) filter.department = department;
-    if (batch) filter.batch = batch;
-
-    const students = await Student.find(filter).sort({ rollNumber: 1 });
+    const students = await listStudents({ department: department || undefined, batch: batch || undefined });
     res.json({ students });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -28,12 +33,12 @@ export const getStudents = async (req, res) => {
 
 export const getStudentByRoll = async (req, res) => {
   try {
-    const student = await Student.findOne({ rollNumber: String(req.params.rollNumber).toUpperCase() })
-      .select('rollNumber name department batch section isEnrolled enrolledAt');
-    if (!student) {
+    const found = await findStudentByRoll(String(req.params.rollNumber));
+    if (!found) {
       return res.status(404).json({ error: 'Student not found' });
     }
-    res.json({ student });
+    const { id, _id, rollNumber, name, department, batch, section, isEnrolled, enrolledAt } = found;
+    res.json({ student: { _id, id, rollNumber, name, department, batch, section, isEnrolled, enrolledAt } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -42,40 +47,44 @@ export const getStudentByRoll = async (req, res) => {
 export const createStudent = async (req, res) => {
   try {
     const { rollNumber, name, email, department, batch, section } = req.body;
-    const existing = await Student.findOne({ rollNumber: rollNumber.toUpperCase() });
+    if (!rollNumber || !name) {
+      return res.status(400).json({ error: 'rollNumber and name are required' });
+    }
+    const existing = await findStudentByRoll(String(rollNumber));
     if (existing) {
       return res.status(400).json({ error: 'Student with this roll number already exists' });
     }
 
     // The faculty hands this to the student once; the student must change it on first login
     const temporaryPassword = generateTemporaryPassword();
-    const student = await Student.create({
-      rollNumber: rollNumber.toUpperCase(),
+    const student = await insertStudent({
+      rollNumber: String(rollNumber),
       name,
       email,
       password: temporaryPassword,
       mustChangePassword: true,
-      department: department || 'Computer Science & Engineering',
-      batch: batch || '2023-2027',
-      section: section || 'A'
+      department,
+      batch,
+      section
     });
 
     res.status(201).json({ student, temporaryPassword });
   } catch (err) {
+    if (err.code === UNIQUE_VIOLATION) {
+      return res.status(400).json({ error: 'Student with this roll number already exists' });
+    }
     res.status(500).json({ error: err.message });
   }
 };
 
 export const resetStudentPassword = async (req, res) => {
   try {
-    const student = await Student.findById(req.params.studentId);
-    if (!student) {
+    const found = await findStudentById(req.params.studentId);
+    if (!found) {
       return res.status(404).json({ error: 'Student not found' });
     }
     const temporaryPassword = generateTemporaryPassword();
-    student.password = temporaryPassword;
-    student.mustChangePassword = true;
-    await student.save();
+    const student = await setStudentPassword(found.id, temporaryPassword, { mustChangePassword: true });
     res.json({ rollNumber: student.rollNumber, temporaryPassword });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -85,8 +94,9 @@ export const resetStudentPassword = async (req, res) => {
 export const enrollFace = async (req, res) => {
   try {
     const { studentId } = req.params;
-    const student = await Student.findById(studentId);
-    if (!student) {
+    const found = await findStudentById(studentId);
+    if (!found) {
+      (req.files || []).forEach((f) => fs.unlink(f.path, () => {}));
       return res.status(404).json({ error: 'Student not found' });
     }
 
@@ -107,11 +117,10 @@ export const enrollFace = async (req, res) => {
 
     const { embedding } = mlRes.data;
 
-    student.faceEmbedding = embedding;
-    student.isEnrolled = true;
-    student.enrolledAt = new Date();
-    student.enrollmentSource = 'FACULTY';
-    await student.save();
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      throw new Error('ML service returned no embedding');
+    }
+    const student = await enrollFaceEmbedding(found.id, embedding, 'FACULTY');
 
     // Clean up temporary uploads
     req.files.forEach((f) => fs.unlink(f.path, () => {}));
@@ -119,10 +128,10 @@ export const enrollFace = async (req, res) => {
     res.json({
       message: 'Face enrolled successfully',
       student: {
-        id: student._id,
+        id: student.id,
         rollNumber: student.rollNumber,
         name: student.name,
-        isEnrolled: true,
+        isEnrolled: student.isEnrolled,
         enrolledAt: student.enrolledAt
       }
     });
@@ -136,7 +145,7 @@ export const enrollFace = async (req, res) => {
 
 export const deleteStudent = async (req, res) => {
   try {
-    await Student.findByIdAndDelete(req.params.id);
+    await removeStudent(req.params.id);
     res.json({ message: 'Student removed' });
   } catch (err) {
     res.status(500).json({ error: err.message });
