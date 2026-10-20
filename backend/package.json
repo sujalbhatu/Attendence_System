@@ -14,6 +14,7 @@
     "set-faculty-password": "node scripts/setFacultyPassword.js"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

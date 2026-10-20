@@ -1,14 +1,21 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getPool } from './index.js';
+import { createClient } from './index.js';
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 const LOCK_ID = 7_465_321; // any constant; stops two servers migrating at once
 
-// Applies every db/migrations/*.sql file that hasn't run yet, in name order, each in its own transaction
+// Applies every db/migrations/*.sql file that hasn't run yet, in name order, each in its own transaction.
+// Uses the direct (unpooled) connection when there is one: the advisory lock is session-level,
+// and a pooler in transaction mode (Neon's -pooler host) can't hold it reliably.
 export async function migrate({ log = console.log } = {}) {
-  const client = await getPool().connect();
+  const connectionString = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is not set (see backend/.env.example)');
+  }
+  const client = createClient({ connectionString });
+  await client.connect();
   try {
     await client.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);
     await client.query(`
@@ -37,7 +44,7 @@ export async function migrate({ log = console.log } = {}) {
     }
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => {});
-    client.release();
+    await client.end();
   }
 }
 
