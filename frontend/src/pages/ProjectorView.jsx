@@ -62,6 +62,26 @@ export default function ProjectorView() {
           }
         };
 
+        // Pushed by the server the moment a student verifies (Redis Pub/Sub across instances)
+        eventSource.addEventListener('checkin', (e) => {
+          try {
+            const { record } = JSON.parse(e.data);
+            if (!record) return;
+            setRoster((prev) => (prev.some((r) => r._id === record._id) ? prev : [record, ...prev]));
+            setPresentCount((n) => n + 1);
+          } catch {}
+        });
+        eventSource.addEventListener('pin-mode', (e) => {
+          try {
+            const { requirePin } = JSON.parse(e.data);
+            setSession((prev) => (prev ? { ...prev, requirePin } : prev));
+          } catch {}
+        });
+        eventSource.addEventListener('concluded', () => {
+          setSession((prev) => (prev ? { ...prev, status: 'CONCLUDED' } : prev));
+          eventSource.close();
+        });
+
         eventSource.onerror = () => console.warn('SSE connection interrupted, retrying...');
       })
       .catch((err) => {
@@ -90,7 +110,8 @@ export default function ProjectorView() {
     return () => clearInterval(interval);
   }, [tokenData.token]);
 
-  // Live roster every 2 s
+  // Check-ins arrive live over the SSE stream; this slower poll only reconciles
+  // (missed events during a reconnect, absentees added on conclude).
   useEffect(() => {
     if (!sessionId) return;
     const fetchRoster = () => {
@@ -103,7 +124,7 @@ export default function ProjectorView() {
         .catch(() => {});
     };
     fetchRoster();
-    const interval = setInterval(fetchRoster, 2000);
+    const interval = setInterval(fetchRoster, 10000);
     return () => clearInterval(interval);
   }, [sessionId]);
 

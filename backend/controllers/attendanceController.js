@@ -4,6 +4,7 @@ import fs from 'fs';
 import { isUuid } from '../db/index.js';
 import { findOwnedSession } from '../repositories/sessions.js';
 import { getActiveSession } from '../services/sessionCache.js';
+import { publishSessionEvent } from '../services/liveEvents.js';
 import { getFaceEmbedding } from '../repositories/students.js';
 import {
   hasAttendanceRecord,
@@ -345,6 +346,9 @@ export const verifyBiometrics = async (req, res) => {
       // Idempotency: the UNIQUE (session_id, student_id) constraint rejected a duplicate.
       return res.status(200).json({ status: 'PRESENT', message: 'Attendance already recorded for this session' });
     }
+
+    // Push to every projector showing this lecture (any instance, via Redis Pub/Sub)
+    publishSessionEvent(session.id, { type: 'checkin', record: result.record }).catch(() => {});
 
     return res.status(200).json({
       status,
