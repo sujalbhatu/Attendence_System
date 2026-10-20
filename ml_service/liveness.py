@@ -1,16 +1,12 @@
 import cv2
 import numpy as np
 
-# Eye cascade classifiers
-_face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-)
-_eye_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_eye.xml"
-)
-_glass_eye_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml"
-)
+from cascades import cascade
+
+# Haar cascade files (one classifier per thread, see cascades.py)
+FACE_CASCADE = "haarcascade_frontalface_default.xml"
+EYE_CASCADE = "haarcascade_eye.xml"
+GLASS_EYE_CASCADE = "haarcascade_eye_tree_eyeglasses.xml"
 
 
 def extract_face_and_eye_strip(img_bgr):
@@ -25,13 +21,13 @@ def extract_face_and_eye_strip(img_bgr):
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     # 1. Multi-pass face detection
-    faces = _face_cascade.detectMultiScale(
+    faces = cascade(FACE_CASCADE).detectMultiScale(
         gray, scaleFactor=1.1, minNeighbors=3, minSize=(40, 40)
     )
     if len(faces) == 0:
         # Equalized histogram pass for challenging lighting
         eq_gray = cv2.equalizeHist(gray)
-        faces = _face_cascade.detectMultiScale(
+        faces = cascade(FACE_CASCADE).detectMultiScale(
             eq_gray, scaleFactor=1.08, minNeighbors=2, minSize=(35, 35)
         )
 
@@ -60,10 +56,10 @@ def _count_eyes_in_strip(eye_strip_gray):
     if eye_strip_gray is None or eye_strip_gray.size == 0:
         return 0
     
-    eyes = _eye_cascade.detectMultiScale(
+    eyes = cascade(EYE_CASCADE).detectMultiScale(
         eye_strip_gray, scaleFactor=1.08, minNeighbors=2, minSize=(10, 10)
     )
-    glass_eyes = _glass_eye_cascade.detectMultiScale(
+    glass_eyes = cascade(GLASS_EYE_CASCADE).detectMultiScale(
         eye_strip_gray, scaleFactor=1.08, minNeighbors=2, minSize=(10, 10)
     )
     return max(len(eyes), len(glass_eyes))
