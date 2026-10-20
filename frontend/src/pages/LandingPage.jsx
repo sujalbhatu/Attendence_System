@@ -1,449 +1,390 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Shield, 
-  QrCode, 
-  Scan, 
-  Users, 
-  Clock, 
-  CheckCircle2, 
-  GraduationCap, 
-  Lock, 
-  Sparkles, 
-  ArrowRight, 
-  Play,
-  Smartphone,
-  Laptop,
-  Monitor,
-  Zap,
-  ShieldCheck,
-  Check,
-  X,
-  Layers,
-  Cpu
-} from 'lucide-react';
+import QRCode from 'qrcode';
+import { ArrowRight, ScanLine, User } from 'lucide-react';
+import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
 
-export default function LandingPage() {
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-main)', color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', overflowX: 'hidden' }}>
-      {/* Sticky Top Header */}
-      <header style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        padding: '1rem 2rem', 
-        position: 'sticky', 
-        top: 0, 
-        background: 'var(--bg-main)', 
-        backdropFilter: 'blur(16px)', 
-        WebkitBackdropFilter: 'blur(16px)',
-        borderBottom: '1px solid var(--border-subtle)', 
-        zIndex: 100 
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{ 
-            background: 'var(--accent-emerald)', 
-            padding: '0.45rem', 
-            borderRadius: '10px', 
-            display: 'flex',
-            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-          }}>
-            <GraduationCap size={22} color="#ffffff" />
-          </div>
-          <span style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>
-            RollOne
-          </span>
-          <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>
-            O(1) Engine
-          </span>
-        </div>
+const REPO_URL = 'https://github.com/sujalbhatu/Attendence_System';
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <ThemeToggle />
-          <Link to="/my-attendance" className="btn btn-secondary" style={{ padding: '0.5rem 1.1rem', fontSize: '0.85rem' }}>
-            Student Portal
-          </Link>
-          <Link to="/login" className="btn btn-emerald" style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}>
-            Faculty Login <ArrowRight size={15} />
-          </Link>
+// Sample check-ins for the hero preview (made-up roll numbers).
+const SAMPLE = ['2023UGCS014', '2023UGCS031', '2023UGCS007', '2023UGCS052', '2023UGCS023', '2023UGCS046', '2023UGCS038', '2023UGCS019'];
+
+const randomToken = () => Array.from({ length: 16 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+
+function HeroPreview() {
+  const [qr, setQr] = useState('');
+  const [tick, setTick] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+
+  // A new code every 4 s, the same rhythm as the real projector
+  useEffect(() => {
+    let cancelled = false;
+    const draw = () =>
+      QRCode.toDataURL(JSON.stringify({ s: 'demo', t: randomToken(), ts: Date.now() }), { width: 220, margin: 0 })
+        .then((url) => !cancelled && setQr(url))
+        .catch(() => {});
+    draw();
+    const id = setInterval(() => {
+      draw();
+      setTick((t) => t + 1);
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(((Date.now() - start) % 4000) / 4000), 60);
+    return () => clearInterval(id);
+  }, [tick]);
+
+  const count = 41 + Math.min(tick * 3, 21);
+  const rows = Array.from({ length: 5 }, (_, i) => SAMPLE[(tick * 3 + i) % SAMPLE.length]);
+  const now = new Date();
+
+  return (
+    <div className="preview" aria-hidden="true">
+      <div className="preview-screen">
+        <div className="preview-bar">
+          <span><b>CS401</b> · Operating Systems · L-302</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}><span className="live-dot" /> live</span>
+        </div>
+        <div className="preview-grid">
+          <div className="preview-qr">
+            <div className="preview-qr-img">{qr && <img src={qr} alt="" />}</div>
+            <div className="preview-timer"><div style={{ width: `${(1 - elapsed) * 100}%` }} /></div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.62rem', color: '#6f6d66' }}>new code in {Math.ceil((1 - elapsed) * 4)}s</div>
+          </div>
+          <div className="preview-list">
+            <div className="preview-count">{count}<span>of 64</span></div>
+            <div className="preview-rows">
+              {rows.map((r, i) => (
+                <div className="preview-row" key={`${tick}-${i}`}>
+                  <span>{r}</span>
+                  <span>{new Date(now.getTime() - i * 2300).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="preview-phone">
+        <div className="preview-phone-inner">
+          <div className="preview-phone-face"><User size={26} /></div>
+          <div className="preview-phone-title">You’re marked present</div>
+          <div className="preview-phone-sub">face match 93.4%</div>
+          <span className="tag tag-present">CS401 · 10:02</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ArchDiagram() {
+  const box = (x, y, w, h, title, sub, strong) => (
+    <g>
+      <rect x={x} y={y} width={w} height={h} rx="8" fill={strong ? 'var(--ink)' : 'var(--surface)'} stroke="var(--line-strong)" />
+      <text x={x + 14} y={y + 24} fontSize="13" fontWeight="600" fill={strong ? 'var(--ink-inverse)' : 'var(--ink)'} fontFamily="var(--font-sans)">{title}</text>
+      <text x={x + 14} y={y + 42} fontSize="11" fill={strong ? 'var(--ink-inverse)' : 'var(--ink-3)'} opacity={strong ? 0.7 : 1} fontFamily="var(--font-mono)">{sub}</text>
+    </g>
+  );
+  const arrow = (x1, y1, x2, y2, label, dx = 8) => (
+    <g>
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--ink-3)" strokeWidth="1.25" markerEnd="url(#arrow)" />
+      {label && <text x={(x1 + x2) / 2 + dx} y={(y1 + y2) / 2 - 4} fontSize="10" fill="var(--ink-3)" fontFamily="var(--font-mono)">{label}</text>}
+    </g>
+  );
+  return (
+    <svg viewBox="0 0 460 360" role="img" aria-label="System diagram: phones and projector talk to an Express API, which uses PostgreSQL and a face-recognition service">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--ink-3)" />
+        </marker>
+      </defs>
+      {box(20, 20, 190, 56, 'Projector', 'SSE: code every 4 s')}
+      {box(250, 20, 190, 56, 'Student phones', 'scan · PIN · 12 frames')}
+      {arrow(115, 76, 195, 132, 'HTTPS', -44)}
+      {arrow(345, 76, 265, 132)}
+      {box(120, 134, 220, 62, 'Express API · Node 22', 'HMAC tokens · rate limits', true)}
+      {arrow(180, 196, 115, 262, 'pg pool', -58)}
+      {arrow(280, 196, 345, 262, 'multipart')}
+      {box(20, 264, 190, 62, 'PostgreSQL · Neon', 'transactions · FKs')}
+      {box(250, 264, 190, 62, 'Face service · Flask', 'FaceNet 512-d · blink')}
+    </svg>
+  );
+}
+
+export default function LandingPage() {
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  return (
+    <div className="landing">
+      <header className={`l-nav ${scrolled ? 'scrolled' : ''}`}>
+        <div className="wrap">
+          <Logo />
+          <nav className="l-links" aria-label="Sections">
+            <a href="#how">How it works</a>
+            <a href="#security">Security</a>
+            <a href="#engineering">Engineering</a>
+            <Link to="/my-attendance">Student portal</Link>
+          </nav>
+          <div className="l-nav-actions">
+            <ThemeToggle />
+            <Link to="/scan" className="btn btn-ghost hide-xs">Check in</Link>
+            <Link to="/login" className="btn btn-primary">Faculty sign in</Link>
+          </div>
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section style={{ paddingTop: '5rem', paddingBottom: '4rem', textAlign: 'center', position: 'relative' }}>
-        {/* Subtle Emerald Radial Glow */}
-        <div style={{ 
-          position: 'absolute', 
-          top: '-15%', 
-          left: '50%', 
-          transform: 'translateX(-50%)', 
-          width: '80vw', 
-          height: '65vh', 
-          background: 'radial-gradient(circle, var(--accent-emerald-subtle) 0%, rgba(0,0,0,0) 70%)', 
-          zIndex: 0, 
-          pointerEvents: 'none' 
-        }}></div>
-        
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: '900px', margin: '0 auto', padding: '0 1.25rem' }}>
-          <div style={{ marginBottom: '1.75rem' }}>
-            <span className="badge badge-emerald" style={{ padding: '0.45rem 1.15rem', fontSize: '0.85rem', gap: '0.5rem' }}>
-              <Zap size={14} /> Parallel Classroom Verification
-            </span>
+      <main>
+        <section className="wrap hero">
+          <div>
+            <div className="eyebrow">Attendance for lecture halls</div>
+            <h1 style={{ marginTop: '1rem' }}>
+              The whole class checks in <em>at once.</em>
+            </h1>
+            <p className="hero-lede">
+              Put one rotating code on the projector. Every student scans it from their seat, their phone confirms
+              they’re in the room and that it’s really them, and the register fills itself in while you start teaching.
+              Sixty students or three hundred, it takes the same few seconds.
+            </p>
+            <div className="hero-cta">
+              <Link to="/login" className="btn btn-primary btn-lg">Start a lecture <ArrowRight size={16} /></Link>
+              <Link to="/scan" className="btn btn-secondary btn-lg"><ScanLine size={16} /> I’m a student</Link>
+            </div>
+            <div className="hero-note">
+              No app to install. Works in the phone’s browser over HTTPS.
+            </div>
           </div>
+          <HeroPreview />
+        </section>
 
-          <h1 style={{ fontSize: 'clamp(2.5rem, 6.5vw, 4.5rem)', fontWeight: 800, lineHeight: 1.08, marginBottom: '1.5rem', letterSpacing: '-0.035em' }}>
-            Zero Roll-Calls.<br />
-            <span style={{ 
-              color: 'var(--accent-emerald)',
-              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
-            }}>
-              Attendance in O(1) Time.
-            </span>
-          </h1>
-
-          <p style={{ fontSize: '1.15rem', color: 'var(--text-secondary)', marginBottom: '2.5rem', maxWidth: '680px', margin: '0 auto 2.5rem', lineHeight: 1.65 }}>
-            Whether you teach 30 students or 300, attendance takes the exact same 10 seconds. Students scan the live screen simultaneously, verify their eye-blink in 1 second, and the lecture roster updates live.
-          </p>
-
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '3.5rem' }}>
-            <Link to="/login" className="btn btn-emerald" style={{ padding: '0.85rem 2rem', fontSize: '1rem', borderRadius: '12px', boxShadow: '0 6px 20px rgba(16, 185, 129, 0.3)' }}>
-              <Play size={18} /> Launch Lecture Session
-            </Link>
-            <Link to="/my-attendance" className="btn btn-secondary" style={{ padding: '0.85rem 2rem', fontSize: '1rem', borderRadius: '12px' }}>
-              <Users size={18} /> Check My Attendance
-            </Link>
-          </div>
-
-          {/* Quick Metric Badges */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', 
-            gap: '1rem', 
-            textAlign: 'left'
-          }}>
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>Human Time Complexity</div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>O(1) Constant</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>Independent of batch size</div>
+        <div className="wrap">
+          <div className="facts">
+            <div className="fact">
+              <div className="fact-num">4<small>s</small></div>
+              <div className="fact-text">How long each code stays valid. A forwarded screenshot is already stale.</div>
             </div>
-
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>Biometric Precision</div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>512-d</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>FaceNet InceptionResNet</div>
+            <div className="fact">
+              <div className="fact-num">35<small>m</small></div>
+              <div className="fact-text">Default geofence around the room. Hostel check-ins are rejected.</div>
             </div>
-
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>QR Rotation Window</div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>4.0s</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>Anti-WhatsApp screenshot</div>
+            <div className="fact">
+              <div className="fact-num">12</div>
+              <div className="fact-text">Frames per face check, enough to catch a natural blink and reject a photo.</div>
             </div>
-
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>Classroom Geofence</div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>GPS Locked</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>Room-level boundary check</div>
+            <div className="fact">
+              <div className="fact-num">1</div>
+              <div className="fact-text">Database transaction per check-in. No half-written records, no duplicates.</div>
             </div>
           </div>
         </div>
-      </section>
 
-      {/* The O(1) vs O(N) Smart Breakdown */}
-      <section style={{ padding: '5rem 1.5rem', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
-        <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: '3.5rem' }}>
-            <span className="badge badge-zinc" style={{ marginBottom: '0.75rem' }}>
-              Algorithm Comparison
-            </span>
-            <h2 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: '0.75rem' }}>
-              Why Attendance Belongs in O(1) Time
-            </h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', maxWidth: '640px', margin: '0 auto' }}>
-              In traditional classes, attendance time scales linearly with student count. CampusTrack distributes verification to student devices in parallel.
-            </p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
-            {/* The Old Way */}
-            <div className="card" style={{ padding: '2rem', border: '1px solid rgba(239, 68, 68, 0.25)', position: 'relative' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--accent-red)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Traditional Roll-Call
-                </span>
-                <span className="badge" style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'var(--accent-red)' }}>
-                  O(N) Sequential
-                </span>
+        <section id="how" className="section">
+          <div className="wrap">
+            <div className="section-head">
+              <div>
+                <div className="eyebrow">How it works</div>
+                <h2>Three steps, done in parallel by everyone in the room.</h2>
               </div>
-              <h3 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '1rem' }}>
-                Time Wasted Scales With Every Student
-              </h3>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <X size={18} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>5–8 minutes lost</strong> calling 60–80 names one by one every lecture.</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <X size={18} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>Proxy answering</strong> ("Yes sir!" shouted by friends for absent peers).</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <X size={18} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>Disrupts class flow</strong>, dispute interruptions, and late sign-in sheets.</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <X size={18} color="var(--accent-red)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span>Manual transcription errors when entering data into college portals.</span>
-                </li>
-              </ul>
-            </div>
-
-            {/* The RollOne Way */}
-            <div className="card" style={{ padding: '2rem', border: '1px solid rgba(16, 185, 129, 0.35)', boxShadow: '0 8px 24px rgba(16, 185, 129, 0.08)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  RollOne Engine
-                </span>
-                <span className="badge badge-emerald">
-                  O(1) Parallel
-                </span>
-              </div>
-              <h3 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '1rem' }}>
-                Constant 10 Seconds Regardless of Size
-              </h3>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <Check size={18} color="var(--accent-emerald)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>10 seconds flat:</strong> 30 or 300 students verify at the exact same moment.</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <Check size={18} color="var(--accent-emerald)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>Mathematically proxy-proof:</strong> 4-second token + blink check + GPS.</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <Check size={18} color="var(--accent-emerald)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>Zero dedicated hardware:</strong> Uses classroom projector & student phones.</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-                  <Check size={18} color="var(--accent-emerald)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span><strong>Auto-absent ledger:</strong> Instant absentee marking & 1-tap CSV export.</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Dual Experience: Laptop / Projector + Mobile Phone */}
-      <section style={{ padding: '5rem 1.5rem', background: 'var(--bg-main)' }}>
-        <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: '3.5rem' }}>
-            <span className="badge badge-emerald" style={{ marginBottom: '0.75rem' }}>
-              Seamless Dual Interface
-            </span>
-            <h2 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: '0.75rem' }}>
-              Built for Both Laptop & Smartphone
-            </h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', maxWidth: '600px', margin: '0 auto' }}>
-              No specialized hardware to buy. RollOne uses the devices already present in every modern college lecture hall.
-            </p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
-            {/* Professor Laptop / Projector Experience */}
-            <div className="card card-hover" style={{ padding: '2rem' }}>
-              <div style={{ 
-                background: 'var(--accent-emerald-subtle)', 
-                width: '48px', 
-                height: '48px', 
-                borderRadius: '12px', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                marginBottom: '1.25rem',
-                border: '1px solid rgba(16, 185, 129, 0.25)'
-              }}>
-                <Monitor size={24} color="var(--accent-emerald)" />
-              </div>
-              <h3 style={{ fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-                On Professor's Laptop / Projector
-              </h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.925rem', lineHeight: 1.6, marginBottom: '1.25rem' }}>
-                Projected at the front of the hall. Generates the live rotating QR feed and visualizes attendance as it happens:
+              <p>
+                A roll call is sequential: the time it takes grows with every name. RollOne hands the checking to the
+                students’ own phones, so they all do it at the same moment and the lecture starts on time.
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', fontSize: '0.875rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> 4-second TOTP cryptographic rotating token
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> Line-of-sight challenge PIN generator
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> Live incoming attendance ticker feed
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> One-click auto-absent mark & CSV export
-                </div>
+            </div>
+            <div className="steps-3">
+              <div className="step-card">
+                <div className="step-num">01</div>
+                <h3>The projector shows a live code</h3>
+                <p>The faculty starts a lecture and the classroom screen shows a QR code that changes every four seconds.</p>
+                <div className="step-detail">HMAC-signed · pushed over server-sent events</div>
+              </div>
+              <div className="step-card">
+                <div className="step-num">02</div>
+                <h3>Students scan from their seats</h3>
+                <p>The scan reserves a place only if the code is current and the phone is inside the room’s geofence. Strict lectures also ask for the digit on the screen.</p>
+                <div className="step-detail">token window · GPS radius · screen PIN</div>
+              </div>
+              <div className="step-card">
+                <div className="step-num">03</div>
+                <h3>A one-second face check</h3>
+                <p>The front camera records a short burst. The face is matched against the one enrolled by faculty, and a blink proves it’s a person, not a photo.</p>
+                <div className="step-detail">FaceNet embeddings · liveness · cosine match</div>
               </div>
             </div>
+          </div>
+        </section>
 
-            {/* Student Mobile Experience */}
-            <div className="card card-hover" style={{ padding: '2rem' }}>
-              <div style={{ 
-                background: 'var(--accent-emerald-subtle)', 
-                width: '48px', 
-                height: '48px', 
-                borderRadius: '12px', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                marginBottom: '1.25rem',
-                border: '1px solid rgba(16, 185, 129, 0.25)'
-              }}>
-                <Smartphone size={24} color="var(--accent-emerald)" />
+        <section className="section section-alt">
+          <div className="wrap">
+            <div className="section-head">
+              <div>
+                <div className="eyebrow">Compared with a roll call</div>
+                <h2>Same register. Less of the lecture spent on it.</h2>
               </div>
-              <h3 style={{ fontSize: '1.3rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-                On Student's Smartphone
-              </h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.925rem', lineHeight: 1.6, marginBottom: '1.25rem' }}>
-                Zero app store install. Works immediately in any browser (Chrome, Safari, Firefox) over secure HTTPS:
+              <p>
+                Figures for a 64-student section, calling each name takes about five seconds. RollOne’s time doesn’t
+                depend on the class size because nobody waits for anyone else.
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', fontSize: '0.875rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> Rapid 2ms presence claim lock
+            </div>
+            <div className="table-scroll">
+              <table className="compare">
+                <thead>
+                  <tr>
+                    <th />
+                    <th>Calling names</th>
+                    <th>RollOne</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><th>Time per lecture</th><td>5–6 minutes</td><td>About 15 seconds</td></tr>
+                  <tr><th>Grows with class size</th><td>Yes, linearly</td><td>No</td></tr>
+                  <tr><th>Answering for a friend</th><td>Easy</td><td>Needs their phone, their face and the room</td></tr>
+                  <tr><th>Absentees</th><td>Written up by hand</td><td>Marked automatically when you conclude</td></tr>
+                  <tr><th>Getting it into a spreadsheet</th><td>Typed in later</td><td>CSV download, one click</td></tr>
+                  <tr><th>Student can check their standing</th><td>Ask the faculty</td><td>Live, course by course, against 75%</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="security" className="section">
+          <div className="wrap">
+            <div className="section-head">
+              <div>
+                <div className="eyebrow">Security</div>
+                <h2>Four checks, each closing a different loophole.</h2>
+              </div>
+              <p>
+                Any one of these can be beaten on its own. Together they require the student to be in the room,
+                looking at the screen, at that moment, with their own face.
+              </p>
+            </div>
+            <div className="layers">
+              <div className="layer">
+                <div className="layer-n">01</div>
+                <div>
+                  <h3>A code that expires in seconds</h3>
+                  <p>Each code is an HMAC of the session and the current 4-second window. The server accepts the current window plus a short grace for network delay, and nothing older.</p>
+                  <div className="defeats">Stops: <b>a photo of the QR sent to someone outside</b></div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> 1-second natural eye blink liveness test
+              </div>
+              <div className="layer">
+                <div className="layer-n">02</div>
+                <div>
+                  <h3>Inside the room’s geofence</h3>
+                  <p>The phone’s location is compared with the room’s centre using the haversine distance, allowing for the accuracy the phone reports.</p>
+                  <div className="defeats">Stops: <b>scanning a forwarded code from the hostel</b></div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> 512-d FaceNet biometric verification
+              </div>
+              <div className="layer">
+                <div className="layer-n">03</div>
+                <div>
+                  <h3>A digit you can only see in person</h3>
+                  <p>Strict lectures show a single digit next to the code. Students tap it on their phone; two wrong guesses and the claim is void. Attempts are counted in the database, so parallel guesses don’t help.</p>
+                  <div className="defeats">Stops: <b>a friend in the corridor relaying the code</b></div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" /> 75% semester criteria tracking dashboard
+              </div>
+              <div className="layer">
+                <div className="layer-n">04</div>
+                <div>
+                  <h3>Their face, and a blink</h3>
+                  <p>Twelve frames go to the face service. FaceNet produces a 512-number embedding compared with the enrolled one, and eye movement across the frames must show a blink.</p>
+                  <div className="defeats">Stops: <b>holding up someone else’s photo</b></div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* The 4-Layer Anti-Proxy Shield */}
-      <section style={{ padding: '5rem 1.5rem', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-subtle)', borderBottom: '1px solid var(--border-subtle)' }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          <div style={{ textAlign: 'center', marginBottom: '3.5rem' }}>
-            <span className="badge badge-emerald" style={{ marginBottom: '0.75rem' }}>
-              Security Architecture
-            </span>
-            <h2 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: '0.75rem' }}>
-              The 4-Layer Anti-Proxy Shield
-            </h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', maxWidth: '620px', margin: '0 auto' }}>
-              Why marking attendance from the hostel or sending a photo on WhatsApp is mathematically impossible.
-            </p>
-          </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.5rem' }}>
-            {[
-              { 
-                icon: QrCode, 
-                title: '4-Second Token Window', 
-                desc: 'Tokens expire in 4 seconds. Any photo sent to an absent friend in the hostel dies before the image can even download.' 
-              },
-              { 
-                icon: Lock, 
-                title: 'Line-of-Sight Challenge PIN', 
-                desc: 'A dynamic 3-digit PIN shown only on the lecture board guarantees the student has their physical eyes on the screen.' 
-              },
-              { 
-                icon: Shield, 
-                title: 'Classroom Geofence', 
-                desc: 'Haversine GPS validation ensures attendance cannot be claimed from outside the lecture hall boundaries.' 
-              },
-              { 
-                icon: Scan, 
-                title: 'Active Blink Verification', 
-                desc: 'OpenCV multi-pass eye motion detection catches natural blinks, instantly rejecting static printed photos and screen replays.' 
-              }
-            ].map((feature, i) => (
-              <div key={i} className="card card-hover" style={{ padding: '1.75rem' }}>
-                <div style={{ 
-                  background: 'var(--accent-emerald-subtle)', 
-                  width: '48px', 
-                  height: '48px', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  marginBottom: '1.25rem', 
-                  border: '1px solid rgba(16, 185, 129, 0.25)' 
-                }}>
-                  <feature.icon size={24} color="var(--accent-emerald)" />
-                </div>
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.65rem' }}>{feature.title}</h3>
-                <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, fontSize: '0.9rem' }}>{feature.desc}</p>
+        <section id="engineering" className="section section-alt">
+          <div className="wrap">
+            <div className="section-head">
+              <div>
+                <div className="eyebrow">Engineering</div>
+                <h2>Built on PostgreSQL, because a register is relational.</h2>
               </div>
-            ))}
+              <p>
+                Students, courses, enrollments, lectures and check-ins all point at each other. RollOne moved from MongoDB to
+                PostgreSQL on Neon so the database enforces those links and every check-in is a single atomic transaction.
+              </p>
+            </div>
+            <div className="arch">
+              <div className="panel arch-diagram">
+                <ArchDiagram />
+              </div>
+              <div>
+                <div className="arch-points">
+                  <div className="arch-point">
+                    <h3>One transaction per check-in</h3>
+                    <p>Recording attendance, bumping the lecture’s counter, updating the face template and deleting the claim either all happen or none do.</p>
+                  </div>
+                  <div className="arch-point">
+                    <h3>Duplicates are impossible, not just unlikely</h3>
+                    <p>A <code>UNIQUE (session_id, student_id)</code> constraint plus <code>ON CONFLICT DO NOTHING</code> means two simultaneous verifications still produce exactly one row.</p>
+                  </div>
+                  <div className="arch-point">
+                    <h3>Absentees in one statement</h3>
+                    <p>Concluding a lecture inserts every missing student as absent with a single <code>INSERT … SELECT</code>, instead of a loop over the class.</p>
+                  </div>
+                </div>
+                <pre className="code">
+<span className="c">-- repositories/attendance.js · conclude a lecture</span>{'\n'}
+<span className="k">INSERT INTO</span> attendance_records (session_id, student_id, status, …){'\n'}
+<span className="k">SELECT</span> $1, s.id, <span className="s">'ABSENT'</span>, …{'\n'}
+<span className="k">FROM</span> enrollments e <span className="k">JOIN</span> students s <span className="k">ON</span> s.id = e.student_id{'\n'}
+<span className="k">WHERE</span> e.course_id = $3 <span className="k">AND</span> e.branch = $4 <span className="k">AND</span> e.status = <span className="s">'active'</span>{'\n'}
+<span className="k">ON CONFLICT</span> (session_id, student_id) <span className="k">DO NOTHING</span>;
+                </pre>
+                <div className="stack">
+                  <span>React 19 · Vite</span>
+                  <span>Node 22 · Express</span>
+                  <span>PostgreSQL 18 on Neon</span>
+                  <span>Flask · PyTorch FaceNet</span>
+                  <span>OpenCV liveness</span>
+                  <span>Nginx · Oracle Cloud</span>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* University Portals CTA */}
-      <section style={{ padding: '4.5rem 1.5rem', background: 'var(--bg-main)' }}>
-        <div style={{ 
-          maxWidth: '900px', 
-          margin: '0 auto', 
-          background: 'var(--bg-surface)', 
-          border: '1px solid var(--border-subtle)', 
-          borderRadius: '20px', 
-          padding: '3rem 2rem', 
-          textAlign: 'center',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.05)'
-        }}>
-          <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '0.75rem' }}>
-            Ready to Take Attendance?
-          </h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', maxWidth: '540px', margin: '0 auto 2rem', lineHeight: 1.6 }}>
-            Access your faculty controls to launch lectures, or open your student portal to track your 75% semester criteria.
-          </p>
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link to="/login" className="btn btn-emerald" style={{ padding: '0.85rem 2rem', fontSize: '0.95rem' }}>
-              Sign In as Faculty
-            </Link>
-            <Link to="/my-attendance" className="btn btn-secondary" style={{ padding: '0.85rem 2rem', fontSize: '0.95rem' }}>
-              Student Attendance Portal
-            </Link>
+        <section className="section">
+          <div className="wrap closing">
+            <h2>Give the first five minutes back to the lecture.</h2>
+            <div className="hero-cta">
+              <Link to="/login" className="btn btn-primary btn-lg">Faculty sign in <ArrowRight size={16} /></Link>
+              <Link to="/my-attendance" className="btn btn-secondary btn-lg">Check my attendance</Link>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      {/* Minimalist Professional Footer */}
-      <footer style={{ 
-        padding: '2.5rem 1.5rem', 
-        background: 'var(--bg-surface)', 
-        borderTop: '1px solid var(--border-subtle)', 
-        textAlign: 'center' 
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.65rem', marginBottom: '0.5rem' }}>
-          <div style={{ background: 'var(--accent-emerald)', padding: '0.35rem', borderRadius: '8px', display: 'flex' }}>
-            <GraduationCap size={18} color="#fff" />
+      <footer className="l-foot">
+        <div className="wrap">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <Logo />
+            <span>Designed and built by Sujal Bhatu, NIT Jamshedpur.</span>
           </div>
-          <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>RollOne</span>
-        </div>
-
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-          Designed & Built by Sujal Bhatu
-        </p>
-
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', fontSize: '0.825rem', flexWrap: 'wrap' }}>
-          <Link to="/login" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Faculty Login</Link>
-          <Link to="/my-attendance" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Student Portal</Link>
-          <Link to="/scan" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>Mobile Scanner</Link>
+          <nav aria-label="Footer">
+            <Link to="/login">Faculty</Link>
+            <Link to="/scan">Check in</Link>
+            <Link to="/my-attendance">Student portal</Link>
+            <a href={REPO_URL} target="_blank" rel="noreferrer">Source on GitHub</a>
+          </nav>
         </div>
       </footer>
     </div>
   );
 }
-
-

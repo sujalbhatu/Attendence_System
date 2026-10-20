@@ -1,8 +1,9 @@
 ﻿import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { AlertCircle } from 'lucide-react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { GraduationCap, ArrowRight } from 'lucide-react';
+import AuthLayout from '../components/AuthLayout';
 
 export default function Signup() {
   const { login } = useAuth();
@@ -11,15 +12,14 @@ export default function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [department, setDepartment] = useState('Computer Science & Engineering');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [inviteCode, setInviteCode] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-
     try {
       const res = await api.post('/auth/register', { name, email, password, department, inviteCode });
       localStorage.setItem('campustrack_jwt', res.data.token);
@@ -32,95 +32,58 @@ export default function Signup() {
   };
 
   return (
-    <div style={{ minHeight: '85vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '2.5rem 2rem' }}>
-        <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
-          <div style={{ width: '48px', height: '48px', background: 'var(--border-subtle)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
-            <GraduationCap size={28} color="var(--accent-emerald)" />
-          </div>
-          <h1 style={{ fontSize: '1.6rem', fontWeight: 800 }}>Create Faculty Account</h1>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Set up professor portal for classroom lectures
-          </p>
+    <AuthLayout>
+      <div className="eyebrow">Faculty</div>
+      <h1 style={{ marginTop: '0.4rem' }}>Create your account</h1>
+      <p>Faculty accounts are invite-only. Ask your department administrator for a code.</p>
+
+      {error && (
+        <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+          <AlertCircle size={16} />
+          <span>{error}</span>
         </div>
+      )}
 
-        {error && (
-          <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--accent-red)', color: 'var(--accent-red)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="form-label">Full Name</label>
-            <input 
-              type="text" 
-              placeholder="Dr. Rajesh Sharma"
-              value={name} 
-              onChange={(e) => setName(e.target.value)}
-              className="form-input"
-              required 
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Campus Email</label>
-            <input 
-              type="email" 
-              placeholder="faculty@campus.edu"
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)}
-              className="form-input"
-              required 
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input 
-              type="password" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)}
-              className="form-input"
-              required 
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Academic Department</label>
-            <input 
-              type="text" 
-              value={department} 
-              onChange={(e) => setDepartment(e.target.value)}
-              className="form-input"
-              required 
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Faculty Invite Code</label>
-            <input 
-              type="text" 
-              value={inviteCode} 
-              onChange={(e) => setInviteCode(e.target.value)}
-              className="form-input"
-              placeholder="Provided by your administrator"
-              required 
-            />
-          </div>
-
-          <button type="submit" disabled={loading} className="btn btn-emerald" style={{ width: '100%', padding: '0.85rem', marginTop: '1rem', fontSize: '0.95rem' }}>
-            {loading ? 'Creating...' : 'Register'} <ArrowRight size={16} />
-          </button>
-        </form>
-
-        <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.825rem', color: 'var(--text-secondary)' }}>
-          Already have an account?{' '}
-          <Link to="/login" style={{ color: 'var(--accent-cyan)', textDecoration: 'none', fontWeight: 600 }}>
-            Sign In
-          </Link>
+      <form onSubmit={handleSubmit}>
+        <div className="field">
+          <label className="label" htmlFor="name">Full name</label>
+          <input id="name" className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required />
         </div>
+        <div className="field">
+          <label className="label" htmlFor="email">Email</label>
+          <input id="email" type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="password">Password</label>
+          <input
+            id="password"
+            type="password"
+            className="input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            minLength={8}
+            required
+          />
+          <span className="hint">At least 8 characters.</span>
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="department">Department</label>
+          <input id="department" className="input" value={department} onChange={(e) => setDepartment(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="invite">Invite code</label>
+          <input id="invite" className="input mono" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} autoComplete="off" required />
+        </div>
+        <button type="submit" disabled={loading} className="btn btn-primary btn-lg btn-block" style={{ marginTop: '0.5rem' }}>
+          {loading ? 'Creating account…' : 'Create account'}
+        </button>
+      </form>
+
+      <div className="divider" style={{ margin: '1.75rem 0 1.25rem' }} />
+      <div style={{ fontSize: '0.86rem', color: 'var(--ink-2)' }}>
+        Already registered? <Link to="/login" className="link">Sign in</Link>
       </div>
-    </div>
+    </AuthLayout>
   );
 }

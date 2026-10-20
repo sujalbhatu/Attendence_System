@@ -3,7 +3,8 @@ import { query, isUuid } from '../db/index.js';
 
 // password_hash and face_embedding are never in this list, so they can't leak into a response
 const PUBLIC_COLUMNS = `id, roll_number, name, email, department, batch, section, photo_url,
-  is_enrolled, enrolled_at, enrollment_source, embedding_version, embedding_updated_at, must_change_password, created_at`;
+  is_enrolled, enrolled_at, enrollment_source, embedding_version, embedding_updated_at, must_change_password, created_at,
+  (password_hash IS NOT NULL) AS can_sign_in`;
 
 export const toStudent = (r) => r && ({
   _id: r.id,
@@ -21,6 +22,7 @@ export const toStudent = (r) => r && ({
   embeddingVersion: r.embedding_version,
   embeddingUpdatedAt: r.embedding_updated_at,
   mustChangePassword: r.must_change_password,
+  canSignIn: r.can_sign_in,
   createdAt: r.created_at
 });
 

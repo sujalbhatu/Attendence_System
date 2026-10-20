@@ -1,258 +1,214 @@
 import React, { useState, useEffect } from 'react';
+import { Plus, Crosshair, DoorOpen, MapPin, Archive, AlertCircle } from 'lucide-react';
 import api from '../api/client';
-import { 
-  DoorOpen, 
-  Plus, 
-  MapPin, 
-  CheckCircle2, 
-  Trash2, 
-  Crosshair, 
-  Building,
-  ShieldCheck
-} from 'lucide-react';
+import Modal from '../components/Modal';
+import { errorText } from '../lib/format';
 
-export default function Classrooms() {
-  const [classrooms, setClassrooms] = useState([]);
-  const [loading, setLoading] = useState(true);
+// Draws the geofence to scale against a fixed 100 m frame, so rooms can be compared at a glance.
+function FenceGlyph({ radius }) {
+  const r = Math.max(4, Math.min(30, (radius / 100) * 30));
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <circle cx="32" cy="32" r="30" fill="none" stroke="var(--line-strong)" strokeDasharray="2 3" />
+      <circle cx="32" cy="32" r={r} fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="1.25" />
+      <circle cx="32" cy="32" r="2" fill="var(--accent)" />
+    </svg>
+  );
+}
 
-  // Modal State
-  const [showModal, setShowModal] = useState(false);
+function AddClassroomModal({ onClose, onSaved }) {
   const [roomCode, setRoomCode] = useState('');
   const [building, setBuilding] = useState('Main Academic Block');
-  const [floor, setFloor] = useState(3);
-  const [capacity, setCapacity] = useState(80);
+  const [floor, setFloor] = useState(1);
+  const [capacity, setCapacity] = useState(60);
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
+  const [accuracy, setAccuracy] = useState(null);
   const [radiusMeters, setRadiusMeters] = useState(35);
-  const [isGettingGps, setIsGettingGps] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchClassrooms();
-  }, []);
-
-  const fetchClassrooms = async () => {
-    try {
-      const res = await api.get('/classrooms');
-      setClassrooms(res.data.classrooms || []);
-      setLoading(false);
-    } catch (err) {
-      console.error(err);
-      setLoading(false);
-    }
-  };
-
-  const grabCurrentLocation = () => {
+  const locate = () => {
     if (!navigator.geolocation) {
-      alert('Geolocation not supported in this browser');
+      setError('This browser cannot read your location.');
       return;
     }
-    setIsGettingGps(true);
+    setLocating(true);
+    setError('');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLatitude(pos.coords.latitude.toFixed(6));
         setLongitude(pos.coords.longitude.toFixed(6));
-        setIsGettingGps(false);
+        setAccuracy(Math.round(pos.coords.accuracy));
+        setLocating(false);
       },
       (err) => {
-        alert('Could not acquire GPS: ' + err.message);
-        setIsGettingGps(false);
+        setError(`Could not get your location: ${err.message}`);
+        setLocating(false);
       },
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true, timeout: 15000 }
     );
   };
 
-  const handleAddClassroom = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
+    setSaving(true);
+    setError('');
     try {
-      await api.post('/classrooms', {
-        roomCode,
-        building,
-        floor,
-        capacity,
-        latitude,
-        longitude,
-        radiusMeters
-      });
-      setShowModal(false);
-      setRoomCode('');
-      setLatitude('');
-      setLongitude('');
-      fetchClassrooms();
+      await api.post('/classrooms', { roomCode, building, floor, capacity, latitude, longitude, radiusMeters });
+      onSaved();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create classroom');
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to archive this classroom?')) {
-      await api.delete(`/classrooms/${id}`);
-      fetchClassrooms();
+      setError(errorText(err, 'Could not save the classroom'));
+      setSaving(false);
     }
   };
 
   return (
-    <div className="main-content">
-      <div className="page-header-row">
-        <div>
-          <h1 style={{ fontSize: '1.85rem', fontWeight: 800 }}>Classroom Geofence Management</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.925rem' }}>
-            Configure physical lecture halls, GPS centroids, and geofence boundary radiuses.
-          </p>
+    <Modal
+      title="Add a classroom"
+      description="Stand in the room when you set its location; check-ins are only accepted inside the circle."
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" form="add-room" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save classroom'}</button>
+        </>
+      }
+    >
+      <form id="add-room" onSubmit={submit}>
+        {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}><AlertCircle size={16} /><span>{error}</span></div>}
+        <div className="field-row">
+          <div className="field">
+            <label className="label" htmlFor="rc">Room</label>
+            <input id="rc" className="input mono" value={roomCode} onChange={(e) => setRoomCode(e.target.value.toUpperCase())} placeholder="L-302" required />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="cap">Seats</label>
+            <input id="cap" type="number" min="1" className="input" value={capacity} onChange={(e) => setCapacity(parseInt(e.target.value, 10) || 0)} />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label className="label" htmlFor="bld">Building</label>
+            <input id="bld" className="input" value={building} onChange={(e) => setBuilding(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="fl">Floor</label>
+            <input id="fl" type="number" className="input" value={floor} onChange={(e) => setFloor(parseInt(e.target.value, 10) || 0)} />
+          </div>
         </div>
 
-        <button onClick={() => setShowModal(true)} className="btn btn-emerald">
-          <Plus size={18} /> Add Classroom
-        </button>
+        <div className="field">
+          <div className="label-row">
+            <span className="label">Location</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={locate} disabled={locating}>
+              <Crosshair size={14} className={locating ? 'spin' : ''} /> {locating ? 'Locating…' : 'Use my location'}
+            </button>
+          </div>
+          <div className="field-row">
+            <input className="input mono" aria-label="Latitude" placeholder="Latitude" value={latitude} onChange={(e) => setLatitude(e.target.value)} required />
+            <input className="input mono" aria-label="Longitude" placeholder="Longitude" value={longitude} onChange={(e) => setLongitude(e.target.value)} required />
+          </div>
+          {accuracy != null && <span className="hint">Your phone reported ±{accuracy} m. Indoors this is often 10–30 m; pick a radius larger than that.</span>}
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <div className="label-row">
+            <label className="label" htmlFor="rad">Geofence radius</label>
+            <span className="mono" style={{ fontSize: '0.85rem' }}>{radiusMeters} m</span>
+          </div>
+          <input id="rad" type="range" min="15" max="100" step="5" value={radiusMeters} onChange={(e) => setRadiusMeters(parseInt(e.target.value, 10))} />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export default function Classrooms() {
+  const [classrooms, setClassrooms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+
+  const load = () =>
+    api.get('/classrooms')
+      .then((res) => setClassrooms(res.data.classrooms || []))
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false));
+
+  useEffect(() => { load(); }, []);
+
+  const archive = async (c) => {
+    if (!window.confirm(`Archive ${c.roomCode}? It will no longer be offered when starting a lecture.`)) return;
+    try {
+      await api.delete(`/classrooms/${c._id}`);
+      load();
+    } catch (err) {
+      alert(errorText(err, 'Could not archive the classroom'));
+    }
+  };
+
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">Classrooms</div>
+          <h1>Rooms and geofences</h1>
+          <p>Each room has a centre point and a radius. A phone outside that circle can’t check in, even with a valid code.</p>
+        </div>
+        <div className="page-head-actions">
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> Add classroom</button>
+        </div>
       </div>
 
-      {/* Classroom Cards Grid */}
-      <div className="classroom-grid">
-        {classrooms.map((c) => (
-          <div key={c._id} className="card card-hover" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <span className="mono" style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-cyan)' }}>
-                  {c.roomCode}
-                </span>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                  {c.building} (Floor {c.floor})
+      {loading ? (
+        <div className="panel loading-line">Loading classrooms…</div>
+      ) : classrooms.length === 0 ? (
+        <div className="panel empty">
+          <DoorOpen size={32} />
+          <h3>No classrooms yet</h3>
+          <p>Add the rooms you teach in. You’ll pick one each time you start a lecture.</p>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> Add classroom</button>
+        </div>
+      ) : (
+        <div className="room-grid">
+          {classrooms.map((c) => (
+            <article key={c._id} className="panel room">
+              <div className="room-top">
+                <div>
+                  <div className="room-code">{c.roomCode}</div>
+                  <div className="room-where">{c.building}{c.floor != null ? `, floor ${c.floor}` : ''}</div>
+                </div>
+                <span className="tag">{c.capacity} seats</span>
+              </div>
+              <div className="room-fence">
+                <FenceGlyph radius={c.radiusMeters} />
+                <div className="room-fence-text">
+                  <div><span className="mono">{c.radiusMeters} m</span> radius</div>
+                  <div className="mono muted" style={{ fontSize: '0.76rem' }}>
+                    {Number(c.latitude).toFixed(5)}, {Number(c.longitude).toFixed(5)}
+                  </div>
                 </div>
               </div>
-              <span className="badge badge-emerald">Cap: {c.capacity}</span>
-            </div>
-
-            <div style={{ 
-              background: 'var(--bg-main)', 
-              padding: '0.85rem', 
-              borderRadius: '10px', 
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.825rem',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.4rem'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <MapPin size={15} color="var(--accent-emerald)" />
-                <span>Centroid: <strong>{c.latitude?.toFixed(5)}, {c.longitude?.toFixed(5)}</strong></span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <ShieldCheck size={15} color="var(--accent-cyan)" />
-                <span>Geofence Boundary: <strong>{c.radiusMeters} meters</strong></span>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
-              <button onClick={() => handleDelete(c._id)} className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}>
-                <Trash2 size={14} color="var(--accent-red)" /> Archive
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Add Modal */}
-      {showModal && (
-        <div className="modal-backdrop">
-          <div className="card modal-card">
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '1rem' }}>Configure Classroom</h2>
-            <form onSubmit={handleAddClassroom}>
-              <div className="form-group">
-                <label className="form-label">Room Code</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. L-302" 
-                  value={roomCode} 
-                  onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                  className="form-input mono" 
-                  required 
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Building / Block</label>
-                <input 
-                  type="text" 
-                  value={building} 
-                  onChange={(e) => setBuilding(e.target.value)}
-                  className="form-input" 
-                  required 
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div className="form-group">
-                  <label className="form-label">Floor</label>
-                  <input 
-                    type="number" 
-                    value={floor} 
-                    onChange={(e) => setFloor(parseInt(e.target.value))}
-                    className="form-input" 
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Capacity</label>
-                  <input 
-                    type="number" 
-                    value={capacity} 
-                    onChange={(e) => setCapacity(parseInt(e.target.value))}
-                    className="form-input" 
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '1.25rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.4rem' }}>
-                  <label className="form-label" style={{ margin: 0 }}>Centroid Coordinates</label>
-                  <button type="button" onClick={grabCurrentLocation} className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}>
-                    <Crosshair size={13} className={isGettingGps ? 'spin' : ''} /> Grab My Location
-                  </button>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem' }}>
-                  <input 
-                    type="text" 
-                    placeholder="Latitude" 
-                    value={latitude} 
-                    onChange={(e) => setLatitude(e.target.value)}
-                    className="form-input mono" 
-                    required 
-                  />
-                  <input 
-                    type="text" 
-                    placeholder="Longitude" 
-                    value={longitude} 
-                    onChange={(e) => setLongitude(e.target.value)}
-                    className="form-input mono" 
-                    required 
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Geofence Radius: {radiusMeters} meters</label>
-                <input 
-                  type="range" 
-                  min="15" 
-                  max="80" 
-                  step="5" 
-                  value={radiusMeters} 
-                  onChange={(e) => setRadiusMeters(parseInt(e.target.value))}
-                  style={{ width: '100%', accentColor: 'var(--accent-cyan)' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
-                <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary" style={{ flex: 1 }}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-emerald" style={{ flex: 1 }}>
-                  Save Classroom
+              <div className="room-foot">
+                <a
+                  className="btn btn-ghost btn-sm"
+                  href={`https://www.openstreetmap.org/?mlat=${c.latitude}&mlon=${c.longitude}#map=19/${c.latitude}/${c.longitude}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MapPin size={14} /> View on map
+                </a>
+                <button className="btn btn-ghost btn-sm" onClick={() => archive(c)}>
+                  <Archive size={14} /> Archive
                 </button>
               </div>
-            </form>
-          </div>
+            </article>
+          ))}
         </div>
       )}
 
-    </div>
+      {showAdd && <AddClassroomModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
+    </>
   );
 }

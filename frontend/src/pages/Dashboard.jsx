@@ -1,331 +1,320 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Plus, Download, MonitorPlay, Zap, Eye, CalendarDays, AlertCircle } from 'lucide-react';
 import api from '../api/client';
-import { 
-  Play, 
-  Plus, 
-  DoorOpen, 
-  Users, 
-  Calendar, 
-  Clock, 
-  ExternalLink, 
-  CheckCircle2, 
-  Radio,
-  BookOpen,
-  Sparkles,
-  Download,
-  Lock
-} from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import Modal from '../components/Modal';
+import { formatDay, formatTime, greeting, downloadSessionCsv, errorText } from '../lib/format';
 
-export default function Dashboard() {
+const OTHER = 'other';
+
+function StartLectureModal({ classrooms, assignments, onClose }) {
   const navigate = useNavigate();
-  const [sessions, setSessions] = useState([]);
-  const [classrooms, setClassrooms] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // New Session Modal State
-  const [showModal, setShowModal] = useState(false);
-  const [courseCode, setCourseCode] = useState('CS301');
-  const [courseName, setCourseName] = useState('Database Management Systems');
-  const [selectedClassroom, setSelectedClassroom] = useState('');
+  const [assignmentId, setAssignmentId] = useState(assignments[0]?._id || OTHER);
+  const [courseCode, setCourseCode] = useState('');
+  const [courseName, setCourseName] = useState('');
+  const [classroomId, setClassroomId] = useState(classrooms[0]?._id || '');
   const [requirePin, setRequirePin] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const assignment = assignments.find((a) => a._id === assignmentId);
 
-  const fetchData = async () => {
-    try {
-      const [sessRes, classRes] = await Promise.all([
-        api.get('/sessions/my'),
-        api.get('/classrooms')
-      ]);
-      setSessions(sessRes.data.sessions || []);
-      setClassrooms(classRes.data.classrooms || []);
-      if (classRes.data.classrooms?.length > 0) {
-        setSelectedClassroom(classRes.data.classrooms[0]._id);
-      }
-      setLoading(false);
-    } catch (err) {
-      console.error('Fetch dashboard error:', err);
-      setLoading(false);
-    }
-  };
-
-  const handleStartSession = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (!selectedClassroom) {
-      alert('Please select a classroom');
-      return;
-    }
-
-    setIsSubmitting(true);
+    setSubmitting(true);
+    setError('');
     try {
-      const res = await api.post('/sessions', {
-        courseCode,
-        courseName,
-        classroomId: selectedClassroom,
-        requirePin
-      });
-      setShowModal(false);
-      // Navigate directly to Projector View for the new session!
+      const body = assignment
+        ? { courseId: assignment.courseId?._id, branch: assignment.branch, classroomId, requirePin }
+        : { courseCode, courseName, classroomId, requirePin };
+      const res = await api.post('/sessions', body);
       navigate(`/projector/${res.data.session._id}`);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create session');
-      setIsSubmitting(false);
+      setError(errorText(err, 'Could not start the lecture'));
+      setSubmitting(false);
     }
   };
 
+  return (
+    <Modal
+      title="Start a lecture"
+      description="Opens the projector screen with a rotating code for this room."
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" form="start-lecture" className="btn btn-primary" disabled={submitting || !classroomId}>
+            <MonitorPlay size={16} /> {submitting ? 'Starting…' : 'Start and open projector'}
+          </button>
+        </>
+      }
+    >
+      <form id="start-lecture" onSubmit={submit}>
+        {error && (
+          <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+            <AlertCircle size={16} /> <span>{error}</span>
+          </div>
+        )}
+
+        <div className="field">
+          <label className="label" htmlFor="course">Course</label>
+          <select id="course" className="select" value={assignmentId} onChange={(e) => setAssignmentId(e.target.value)}>
+            {assignments.map((a) => (
+              <option key={a._id} value={a._id}>
+                {a.courseId?.courseCode} · {a.courseId?.courseName} ({a.branch})
+              </option>
+            ))}
+            <option value={OTHER}>Other (not linked to a course)</option>
+          </select>
+          <span className="hint">
+            {assignment
+              ? 'Enrolled students who don’t check in are marked absent when you conclude.'
+              : 'Without a course, only the students who check in are recorded.'}
+          </span>
+        </div>
+
+        {!assignment && (
+          <div className="field-row">
+            <div className="field">
+              <label className="label" htmlFor="code">Code</label>
+              <input id="code" className="input mono" value={courseCode} onChange={(e) => setCourseCode(e.target.value.toUpperCase())} placeholder="CS301" required />
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="title">Title</label>
+              <input id="title" className="input" value={courseName} onChange={(e) => setCourseName(e.target.value)} placeholder="Database Systems" required />
+            </div>
+          </div>
+        )}
+
+        <div className="field">
+          <label className="label" htmlFor="room">Room</label>
+          {classrooms.length ? (
+            <select id="room" className="select" value={classroomId} onChange={(e) => setClassroomId(e.target.value)}>
+              {classrooms.map((c) => (
+                <option key={c._id} value={c._id}>
+                  {c.roomCode} · {c.building} · seats {c.capacity}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="alert alert-warn">
+              <AlertCircle size={16} />
+              <span>Add a classroom first. <Link to="/classrooms" className="link">Go to Classrooms</Link></span>
+            </div>
+          )}
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <span className="label">Check-in</span>
+          <div className="choice-group">
+            <button type="button" className="choice" aria-pressed={!requirePin} onClick={() => setRequirePin(false)}>
+              <span className="choice-title"><Zap size={14} /> Quick</span>
+              <span className="choice-desc">Scan the code, then a face check. Good when you present from a phone.</span>
+            </button>
+            <button type="button" className="choice" aria-pressed={requirePin} onClick={() => setRequirePin(true)}>
+              <span className="choice-title"><Eye size={14} /> With screen PIN</span>
+              <span className="choice-desc">Students also tap the digit on the projector. Stops scans from the corridor.</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  const [sessions, setSessions] = useState([]);
+  const [classrooms, setClassrooms] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showStart, setShowStart] = useState(false);
   const [exportingId, setExportingId] = useState(null);
 
-  const handleExportCSV = async (sessionId, courseCode = 'lecture') => {
-    setExportingId(sessionId);
+  useEffect(() => {
+    Promise.all([
+      api.get('/sessions/my'),
+      api.get('/classrooms'),
+      api.get('/courses/my-assignments').catch(() => ({ data: { assignments: [] } }))
+    ])
+      .then(([s, c, a]) => {
+        setSessions(s.data.sessions || []);
+        setClassrooms(c.data.classrooms || []);
+        setAssignments(a.data.assignments || []);
+      })
+      .catch((err) => console.error('Dashboard load failed', err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const live = sessions.filter((s) => s.status === 'ACTIVE');
+
+  const stats = useMemo(() => {
+    const concluded = sessions.filter((s) => s.status !== 'ACTIVE');
+    const checkIns = sessions.reduce((n, s) => n + (s.stats?.presentCount || 0), 0);
+    const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    return {
+      total: sessions.length,
+      concluded: concluded.length,
+      checkIns,
+      avg: sessions.length ? checkIns / sessions.length : 0,
+      thisWeek: sessions.filter((s) => new Date(s.sessionDate).getTime() > weekAgo).length,
+      flagged: sessions.reduce((n, s) => n + (s.stats?.flaggedCount || 0), 0)
+    };
+  }, [sessions]);
+
+  const exportCsv = async (s) => {
+    setExportingId(s._id);
     try {
-      const response = await api.get(`/sessions/${sessionId}/export-csv`, {
-        responseType: 'blob'
-      });
-      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `attendance_${courseCode}_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await downloadSessionCsv(s._id, s.courseCode);
     } catch (err) {
-      alert('Failed to export CSV: ' + (err.response?.data?.error || err.message));
+      alert(`Export failed: ${errorText(err, 'unknown error')}`);
     } finally {
       setExportingId(null);
     }
   };
 
+  const firstName = user?.name?.replace(/^(dr|prof)\.?\s+/i, '').split(' ')[0];
+
   return (
-    <div className="main-content">
-      {/* Top Banner */}
-      <div className="page-header-row">
+    <>
+      <div className="page-head">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem' }}>
-            <span className="badge badge-emerald"><Sparkles size={12} /> University Enterprise</span>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>NIT Jamshedpur • CSE</span>
-          </div>
-          <h1 style={{ fontSize: '1.85rem', fontWeight: 800 }}>Faculty Lecture Dashboard</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.925rem' }}>
-            Manage lecture attendance with O(1) rotating cryptographic tokens.
-          </p>
+          <div className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+          <h1>{greeting()}{firstName ? `, ${firstName}` : ''}</h1>
+          <p>Your lectures, newest first. Start one to put a live code on the projector.</p>
         </div>
-
-        <button onClick={() => setShowModal(true)} className="btn btn-emerald" style={{ padding: '0.75rem 1.25rem' }}>
-          <Plus size={18} /> Launch New Lecture Session
-        </button>
-      </div>
-
-      {/* Overview Cards */}
-      <div className="stats-grid">
-        <div className="card">
-          <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Total Sessions</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-primary)' }}>{sessions.length}</div>
-        </div>
-
-        <div className="card">
-          <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Configured Classrooms</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-cyan)' }}>{classrooms.length}</div>
-        </div>
-
-        <div className="card">
-          <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Biometric Anti-Spoof</div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent-emerald)', marginTop: '0.4rem' }}>
-            Active (FaceNet 512-d)
-          </div>
+        <div className="page-head-actions">
+          <button className="btn btn-primary" onClick={() => setShowStart(true)} disabled={loading}>
+            <Plus size={16} /> Start a lecture
+          </button>
         </div>
       </div>
 
-      {/* Sessions Table */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <h2 style={{ fontSize: '1.15rem', margin: 0 }}>Recent Lecture Sessions</h2>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Showing last 20 lectures</span>
+      {live.map((s) => (
+        <div key={s._id} className="callout" style={{ borderColor: 'var(--line-strong)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0 }}>
+            <span className="live-dot" />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600 }}>
+                <span className="mono" style={{ fontWeight: 500 }}>{s.courseCode}</span> · {s.courseName}
+              </div>
+              <div className="muted" style={{ fontSize: '0.82rem' }}>
+                Live in {s.classroomId?.roomCode || 'room'} since {formatTime(s.sessionDate)} · {s.stats?.presentCount || 0} checked in
+              </div>
+            </div>
+          </div>
+          <Link to={`/projector/${s._id}`} className="btn btn-primary btn-sm">
+            <MonitorPlay size={14} /> Open projector
+          </Link>
+        </div>
+      ))}
+
+      <div className="stat-strip">
+        <div className="stat">
+          <div className="stat-label">Lectures recorded</div>
+          <div className="stat-value">{stats.total}</div>
+          <div className="stat-note">{stats.thisWeek} in the last 7 days</div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Check-ins</div>
+          <div className="stat-value">{stats.checkIns}</div>
+          <div className="stat-note">face-verified, all lectures</div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Average per lecture</div>
+          <div className="stat-value">{stats.avg.toFixed(1)}</div>
+          <div className="stat-note">students present</div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Flagged for review</div>
+          <div className="stat-value">{stats.flagged}</div>
+          <div className="stat-note">low match or liveness doubt</div>
+        </div>
+      </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Recent lectures</h2>
+          <span className="muted">Last {Math.min(sessions.length, 20)}</span>
         </div>
 
-        <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
-          <table className="table table-responsive">
-            <thead>
-              <tr>
-                <th>Course</th>
-                <th>Lecture Name</th>
-                <th>Room</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Present</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.length === 0 ? (
+        {loading ? (
+          <div className="loading-line">Loading lectures…</div>
+        ) : sessions.length === 0 ? (
+          <div className="empty">
+            <CalendarDays size={32} />
+            <h3>No lectures yet</h3>
+            <p>Start your first lecture and the projector will show a code students scan from their seats.</p>
+            <button className="btn btn-primary" onClick={() => setShowStart(true)}>
+              <Plus size={16} /> Start a lecture
+            </button>
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="table table-min">
+              <thead>
                 <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                    No lecture sessions created yet. Click "Launch New Lecture Session" above!
-                  </td>
+                  <th>Course</th>
+                  <th>Room</th>
+                  <th>When</th>
+                  <th>Check-in</th>
+                  <th className="right">Present</th>
+                  <th />
                 </tr>
-              ) : (
-                sessions.map((s) => (
+              </thead>
+              <tbody>
+                {sessions.map((s) => (
                   <tr key={s._id}>
                     <td>
-                      <span className="mono" style={{ fontWeight: 700, color: 'var(--accent-cyan)' }}>{s.courseCode}</span>
+                      <div className="cell-title">{s.courseName || 'Untitled lecture'}</div>
+                      <div className="cell-sub mono">{s.courseCode}{s.branch ? ` · ${s.branch}` : ''}</div>
                     </td>
-                    <td style={{ fontWeight: 600 }}>{s.courseName}</td>
-                    <td>{s.classroomId?.roomCode || 'L-302'}</td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                      {new Date(s.sessionDate).toLocaleDateString()}
+                    <td className="mono">{s.classroomId?.roomCode || '—'}</td>
+                    <td className="nowrap">
+                      <div>{formatDay(s.sessionDate)}</div>
+                      <div className="cell-sub">{formatTime(s.sessionDate)}</div>
                     </td>
                     <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      {s.status === 'ACTIVE' ? (
+                        <span className="tag tag-accent tag-dot">Live</span>
+                      ) : (
+                        <span className="tag">{s.requirePin ? 'With PIN' : 'Quick'}</span>
+                      )}
+                    </td>
+                    <td className="right mono num">
+                      {s.stats?.presentCount || 0}
+                      {s.stats?.flaggedCount ? <span className="muted"> +{s.stats.flaggedCount}</span> : null}
+                    </td>
+                    <td>
+                      <div className="row-actions">
                         {s.status === 'ACTIVE' ? (
-                          <span className="badge badge-emerald"><Radio size={12} /> Active</span>
+                          <Link to={`/projector/${s._id}`} className="btn btn-secondary btn-sm">Projector</Link>
                         ) : (
-                          <span className="badge badge-zinc">Concluded</span>
+                          <Link to={`/analytics?session=${s._id}`} className="btn btn-ghost btn-sm">Register</Link>
                         )}
-                        <span style={{ fontSize: '0.7rem', fontWeight: 600, color: s.requirePin ? 'var(--accent-emerald)' : 'var(--accent-cyan)' }}>
-                          {s.requirePin ? '🔒 PIN Mode' : '⚡ Fast Mode'}
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <strong style={{ color: 'var(--text-primary)' }}>{s.stats?.presentCount || 0}</strong> students
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <Link to={`/projector/${s._id}`} className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.78rem' }}>
-                          <ExternalLink size={14} /> Projector
-                        </Link>
-                        <button 
-                          onClick={() => handleExportCSV(s._id, s.courseCode)}
+                        <button
+                          className="btn btn-ghost btn-sm btn-icon"
+                          onClick={() => exportCsv(s)}
                           disabled={exportingId === s._id}
-                          className="btn btn-secondary" 
-                          style={{ padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
-                          title="Download Attendance CSV"
+                          title="Download CSV"
+                          aria-label={`Download CSV for ${s.courseCode}`}
                         >
-                          <Download size={14} /> {exportingId === s._id ? '...' : 'CSV'}
+                          <Download size={15} className={exportingId === s._id ? 'spin' : ''} />
                         </button>
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Start Session Modal */}
-      {showModal && (
-        <div className="modal-backdrop">
-          <div className="card modal-card">
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '0.35rem' }}>
-              Launch Lecture Session
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              This will generate rotating HMAC tokens and open the classroom projector display.
-            </p>
-
-            <form onSubmit={handleStartSession}>
-              <div className="form-group">
-                <label className="form-label">Course Code</label>
-                <input 
-                  type="text" 
-                  value={courseCode} 
-                  onChange={(e) => setCourseCode(e.target.value.toUpperCase())}
-                  className="form-input mono" 
-                  required 
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Lecture Topic / Title</label>
-                <input 
-                  type="text" 
-                  value={courseName} 
-                  onChange={(e) => setCourseName(e.target.value)}
-                  className="form-input" 
-                  required 
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Classroom Location</label>
-                <select 
-                  value={selectedClassroom} 
-                  onChange={(e) => setSelectedClassroom(e.target.value)}
-                  className="form-select"
-                  required
-                >
-                  {classrooms.map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.roomCode} — {c.building} (Cap: {c.capacity})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group" style={{ marginTop: '1.25rem' }}>
-                <label className="form-label" style={{ marginBottom: '0.5rem', display: 'block' }}>
-                  Verification Mode
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem' }}>
-                  <div 
-                    onClick={() => setRequirePin(false)}
-                    style={{
-                      padding: '0.85rem',
-                      borderRadius: '10px',
-                      border: !requirePin ? '2px solid var(--accent-cyan)' : '1px solid var(--border-subtle)',
-                      background: !requirePin ? 'var(--accent-cyan-subtle)' : 'var(--bg-surface)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontWeight: 700, fontSize: '0.88rem', color: !requirePin ? 'var(--accent-cyan)' : 'var(--text-primary)' }}>
-                      <Sparkles size={15} /> Fast Mode
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.3rem', lineHeight: '1.3' }}>
-                      Quick scan & face check. Recommended for phone or podium.
-                    </div>
-                  </div>
-
-                  <div 
-                    onClick={() => setRequirePin(true)}
-                    style={{
-                      padding: '0.85rem',
-                      borderRadius: '10px',
-                      border: requirePin ? '2px solid var(--accent-emerald)' : '1px solid var(--border-subtle)',
-                      background: requirePin ? 'var(--accent-emerald-subtle)' : 'var(--bg-surface)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontWeight: 700, fontSize: '0.88rem', color: requirePin ? 'var(--accent-emerald)' : 'var(--text-primary)' }}>
-                      <Lock size={15} /> Strict PIN
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.3rem', lineHeight: '1.3' }}>
-                      Line-of-Sight challenge PIN. Best for big projector screens.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.75rem' }}>
-                <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary" style={{ flex: 1 }}>
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmitting} className="btn btn-emerald" style={{ flex: 1 }}>
-                  <Play size={16} /> {isSubmitting ? 'Starting...' : 'Start Session'}
-                </button>
-              </div>
-            </form>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
+      </section>
 
-    </div>
+      {showStart && (
+        <StartLectureModal classrooms={classrooms} assignments={assignments} onClose={() => setShowStart(false)} />
+      )}
+    </>
   );
 }

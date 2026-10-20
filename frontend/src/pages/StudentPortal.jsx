@@ -1,51 +1,130 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronDown, LogOut, ScanLine, ShieldAlert, BookOpen } from 'lucide-react';
 import api from '../api/client';
-import { 
-  User, 
-  Lock, 
-  AlertTriangle, 
-  CheckCircle, 
-  XCircle, 
-  ChevronDown, 
-  ChevronUp, 
-  LogOut,
-  GraduationCap,
-  Sparkles,
-  BookOpen,
-  Calendar,
-  CheckCircle2,
-  ArrowLeft
-} from 'lucide-react';
+import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
+import { formatDay, formatTime } from '../lib/format';
+import { loadStudentToken, loadStudentData, saveStudentSession, clearStudentSession, studentAuthHeaders } from '../api/studentSession';
 
-export default function StudentPortal() {
-  const [token, setToken] = useState(localStorage.getItem('rollone-student-token'));
-  const [student, setStudent] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('rollone-student-data') || 'null');
-    } catch {
-      return null;
-    }
-  });
-  const [courses, setCourses] = useState([]);
-  const [loadingCourses, setLoadingCourses] = useState(false);
-  const [expandedCourse, setExpandedCourse] = useState(null);
-  const [sessions, setSessions] = useState([]);
-  const [loadingSessions, setLoadingSessions] = useState(false);
+const THRESHOLD = 0.75;
 
-  // Login Form State
-  const [rollNumber, setRollNumber] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [mustChangePassword, setMustChangePassword] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
+// How many lectures a student can still miss, or must attend in a row, to stay at 75%.
+function headroom(present, total) {
+  if (total === 0) return { kind: 'none' };
+  if (present / total >= THRESHOLD) {
+    return { kind: 'spare', n: Math.floor(present / THRESHOLD - total) };
+  }
+  return { kind: 'need', n: Math.ceil((THRESHOLD * total - present) / (1 - THRESHOLD)) };
+}
+
+function headroomText(h) {
+  if (h.kind === 'none') return 'No lectures yet';
+  if (h.kind === 'spare') return h.n === 0 ? 'No lectures to spare' : `Can miss ${h.n} more`;
+  return `Attend the next ${h.n} to reach 75%`;
+}
+
+function CourseRow({ item, token, open, onToggle }) {
+  const course = item.course;
+  const a = item.attendance || { present: 0, total: 0, percentage: 0 };
+  const pct = a.percentage;
+  const level = a.total === 0 ? '' : pct >= 75 ? '' : pct >= 60 ? 'warn' : 'low';
+  const h = headroom(a.present, a.total);
+  const [records, setRecords] = useState(null);
 
   useEffect(() => {
-    if (token && !mustChangePassword) {
-      fetchCourses();
-    }
+    if (!open || records) return;
+    api.get(`/student-portal/attendance/${course._id}`, { headers: studentAuthHeaders(token) })
+      .then((res) => setRecords(res.data.attendance || []))
+      .catch(() => setRecords([]));
+  }, [open]);
+
+  return (
+    <article className="panel" style={{ overflow: 'hidden' }}>
+      <div
+        className="course-row"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={onToggle}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onToggle())}
+      >
+        <div className="course-row-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="mono muted" style={{ fontSize: '0.8rem' }}>{course.courseCode} · {item.branch}</div>
+            <div style={{ fontWeight: 600, fontSize: '1.02rem', marginTop: '0.1rem' }}>{course.courseName}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div className="course-row-pct" style={{ color: level === 'low' ? 'var(--absent)' : level === 'warn' ? 'var(--flagged)' : 'var(--ink)' }}>
+              {a.total === 0 ? '—' : `${Math.round(pct)}%`}
+            </div>
+            <ChevronDown size={18} className="muted" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+          </div>
+        </div>
+        <div className="meter">
+          <div className={`meter-fill ${level}`} style={{ width: `${Math.min(100, pct)}%` }} />
+          <div className="meter-mark" style={{ left: '75%' }} title="75% requirement" />
+        </div>
+        <div className="course-row-foot">
+          <span className="mono">{a.present} of {a.total} lecture{a.total === 1 ? '' : 's'}</span>
+          <span style={{ color: h.kind === 'need' ? 'var(--absent)' : undefined }}>{headroomText(h)}</span>
+        </div>
+      </div>
+
+      {open && (
+        <div className="course-detail">
+          {!records ? (
+            <div className="loading-line">Loading lectures…</div>
+          ) : records.length === 0 ? (
+            <div className="loading-line">No lectures recorded for this course yet.</div>
+          ) : (
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Lecture</th>
+                    <th>Time</th>
+                    <th className="right">You</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((r) => (
+                    <tr key={r._id}>
+                      <td>{formatDay(r.sessionId?.sessionDate || r.markedAt)}</td>
+                      <td className="mono muted">{formatTime(r.sessionId?.sessionDate || r.markedAt)}</td>
+                      <td className="right">
+                        <span className={`tag ${r.status === 'PRESENT' ? 'tag-present' : r.status === 'FLAGGED' ? 'tag-flagged' : 'tag-absent'}`}>
+                          {r.status === 'PRESENT' ? 'Present' : r.status === 'FLAGGED' ? 'Under review' : 'Absent'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+export default function StudentPortal() {
+  const [token, setToken] = useState(() => loadStudentToken());
+  const [student, setStudent] = useState(() => loadStudentData());
+  const [courses, setCourses] = useState([]);
+  const [loadingCourses, setLoadingCourses] = useState(() => !!loadStudentToken());
+  const [expanded, setExpanded] = useState(null);
+
+  const [rollNumber, setRollNumber] = useState('');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (token && !mustChangePassword) fetchCourses();
   }, [token, mustChangePassword]);
 
   const handleLogin = async (e) => {
@@ -53,21 +132,15 @@ export default function StudentPortal() {
     setLoading(true);
     setError('');
     try {
-      const cleanRoll = rollNumber.trim().toUpperCase();
-      const res = await api.post('/student-portal/login', { 
-        rollNumber: cleanRoll, 
-        password 
-      });
-      const { token: receivedToken, student: studentData, mustChangePassword: needsNew } = res.data;
-      localStorage.setItem('rollone-student-token', receivedToken);
-      localStorage.setItem('rollone-student-data', JSON.stringify(studentData));
-      setMustChangePassword(!!needsNew);
-      setToken(receivedToken);
-      setStudent(studentData);
-      if (!needsNew) setPassword('');
-      setLoading(false);
+      const res = await api.post('/student-portal/login', { rollNumber: rollNumber.trim().toUpperCase(), password });
+      saveStudentSession(res.data.token, res.data.student);
+      setMustChangePassword(!!res.data.mustChangePassword);
+      setToken(res.data.token);
+      setStudent(res.data.student);
+      if (!res.data.mustChangePassword) setPassword('');
     } catch (err) {
       setError(err.response?.data?.error || 'Invalid roll number or password');
+    } finally {
       setLoading(false);
     }
   };
@@ -80,10 +153,9 @@ export default function StudentPortal() {
       const res = await api.post(
         '/student-portal/change-password',
         { currentPassword: password, newPassword },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: studentAuthHeaders(token) }
       );
-      localStorage.setItem('rollone-student-token', res.data.token);
-      localStorage.setItem('rollone-student-data', JSON.stringify(res.data.student));
+      saveStudentSession(res.data.token, res.data.student);
       setStudent(res.data.student);
       setPassword('');
       setNewPassword('');
@@ -97,348 +169,146 @@ export default function StudentPortal() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('rollone-student-token');
-    localStorage.removeItem('rollone-student-data');
+    clearStudentSession();
     setToken(null);
     setStudent(null);
     setMustChangePassword(false);
     setCourses([]);
-    setExpandedCourse(null);
-    setSessions([]);
+    setExpanded(null);
   };
 
   const fetchCourses = async () => {
     setLoadingCourses(true);
     try {
-      const res = await api.get('/student-portal/my-courses', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get('/student-portal/my-courses', { headers: studentAuthHeaders(token) });
       setCourses(res.data.courses || []);
     } catch (err) {
-      if (err.response?.status === 401) {
-        handleLogout();
-      } else if (err.response?.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
-        setMustChangePassword(true);
-      }
+      if (err.response?.data?.code === 'PASSWORD_CHANGE_REQUIRED') setMustChangePassword(true);
+      else if (err.response?.status === 401) handleLogout();
     } finally {
       setLoadingCourses(false);
     }
   };
 
-  const fetchSessions = async (courseId) => {
-    setLoadingSessions(true);
-    try {
-      const res = await api.get(`/student-portal/attendance/${courseId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setSessions(res.data.attendance || []);
-    } catch (err) {
-      console.error('Failed to load sessions', err);
-    } finally {
-      setLoadingSessions(false);
-    }
-  };
-
-  const toggleCourse = (courseId) => {
-    if (expandedCourse === courseId) {
-      setExpandedCourse(null);
-    } else {
-      setExpandedCourse(courseId);
-      fetchSessions(courseId);
-    }
-  };
-
-  const getStatusBadge = (percentage) => {
-    const p = Math.round(percentage);
-    if (p >= 75) {
-      return (
-        <span className="badge badge-emerald" style={{ gap: '0.35rem' }}>
-          <CheckCircle size={14} /> Safe ({p}%)
-        </span>
-      );
-    }
-    if (p >= 60) {
-      return (
-        <span className="badge" style={{ background: 'rgba(217, 119, 6, 0.12)', color: 'var(--accent-amber)', borderColor: 'rgba(217, 119, 6, 0.25)', gap: '0.35rem' }}>
-          <AlertTriangle size={14} /> Warning ({p}%)
-        </span>
-      );
-    }
-    return (
-      <span className="badge" style={{ background: 'rgba(220, 38, 38, 0.12)', color: 'var(--accent-red)', borderColor: 'rgba(220, 38, 38, 0.25)', gap: '0.35rem' }}>
-        <XCircle size={14} /> Critical ({p}%)
-      </span>
-    );
-  };
-
-  // 1. Login Screen (also used for the forced password change)
   if (!token || mustChangePassword) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-        <div className="card" style={{ maxWidth: '420px', width: '100%', padding: '2.5rem 2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.85rem' }}>
-              <ArrowLeft size={16} /> Home
-            </Link>
-            <ThemeToggle />
-          </div>
+      <div className="scan" style={{ justifyContent: 'flex-start' }}>
+        <div className="scan-top">
+          <Logo />
+          <ThemeToggle />
+        </div>
+        <div style={{ margin: 'auto 0', padding: '2rem 0' }}>
+          <div className="eyebrow">Student portal</div>
+          <h1 className="serif" style={{ fontSize: '2.4rem', lineHeight: 1.05, margin: '0.4rem 0 0.6rem' }}>
+            {mustChangePassword ? 'Choose a password' : 'Your attendance, course by course'}
+          </h1>
+          <p className="soft" style={{ fontSize: '0.92rem', marginBottom: '1.5rem' }}>
+            {mustChangePassword
+              ? 'Replace the temporary password from your faculty with one only you know.'
+              : 'See where you stand against the 75% requirement before it becomes a problem.'}
+          </p>
 
-          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <div style={{ 
-              background: 'var(--accent-emerald)', 
-              width: '44px', 
-              height: '44px', 
-              borderRadius: '10px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              margin: '0 auto 0.75rem',
-              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-            }}>
-              <GraduationCap size={24} color="#ffffff" />
-            </div>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.35rem' }}>RollOne Student Portal</h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Check your official 75% semester attendance</p>
-          </div>
-
-          {error && (
-            <div style={{ background: 'rgba(220, 38, 38, 0.1)', border: '1px solid var(--accent-red)', color: 'var(--accent-red)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              {error}
-            </div>
-          )}
+          {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}><ShieldAlert size={16} /><span>{error}</span></div>}
 
           {mustChangePassword ? (
             <form onSubmit={handleChangePassword}>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                Your password is still your roll number, which anyone could guess. Set a new one to continue.
+              <div className="field">
+                <label className="label" htmlFor="cur">Current password</label>
+                <input id="cur" type="password" className="input" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
               </div>
-              <div className="form-group">
-                <label className="form-label">Current Password</label>
-                <input
-                  type="password"
-                  className="form-input"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  required
-                />
+              <div className="field">
+                <label className="label" htmlFor="new">New password</label>
+                <input id="new" type="password" className="input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" minLength={8} required />
+                <span className="hint">At least 8 characters, not your roll number.</span>
               </div>
-              <div className="form-group">
-                <label className="form-label">New Password (min 8 characters)</label>
-                <input
-                  type="password"
-                  className="form-input"
-                  value={newPassword}
-                  onChange={e => setNewPassword(e.target.value)}
-                  autoComplete="new-password"
-                  minLength={8}
-                  required
-                />
-              </div>
-              <button type="submit" className="btn btn-emerald" style={{ width: '100%', marginTop: '1.25rem', padding: '0.75rem' }} disabled={loading}>
-                {loading ? 'Saving...' : 'Save New Password'}
-              </button>
-              <button type="button" onClick={handleLogout} className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem' }}>
-                Use a different account
-              </button>
+              <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={loading}>{loading ? 'Saving…' : 'Save password'}</button>
+              <button type="button" onClick={handleLogout} className="btn btn-ghost btn-block" style={{ marginTop: '0.5rem' }}>Use a different account</button>
             </form>
           ) : (
             <form onSubmit={handleLogin}>
-              <div className="form-group">
-                <label className="form-label">College Roll Number</label>
-                <div style={{ position: 'relative' }}>
-                  <User size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                  <input 
-                    type="text" 
-                    className="form-input mono" 
-                    style={{ paddingLeft: '2.5rem', textTransform: 'uppercase' }} 
-                    placeholder="e.g. 2023UGCS042"
-                    value={rollNumber} 
-                    onChange={e => setRollNumber(e.target.value)} 
-                    required 
-                  />
-                </div>
+              <div className="field">
+                <label className="label" htmlFor="roll">Roll number</label>
+                <input id="roll" className="input mono" value={rollNumber} onChange={(e) => setRollNumber(e.target.value.toUpperCase())} placeholder="2023UGCS042" autoComplete="username" required />
               </div>
-
-              <div className="form-group">
-                <label className="form-label">Password</label>
-                <div style={{ position: 'relative' }}>
-                  <Lock size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                  <input 
-                    type="password" 
-                    className="form-input" 
-                    style={{ paddingLeft: '2.5rem' }} 
-                    placeholder="Default: lowercase roll number"
-                    value={password} 
-                    onChange={e => setPassword(e.target.value)} 
-                    required 
-                  />
-                </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                  First login: your password is your roll number in lowercase. You will be asked to change it.
-                </div>
+              <div className="field">
+                <label className="label" htmlFor="pw">Password</label>
+                <input id="pw" type="password" className="input" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+                <span className="hint">First time? Use the temporary password from your faculty.</span>
               </div>
-
-              <button type="submit" className="btn btn-emerald" style={{ width: '100%', marginTop: '1.25rem', padding: '0.75rem' }} disabled={loading}>
-                {loading ? 'Signing In...' : 'Sign In to Portal'}
-              </button>
+              <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
             </form>
           )}
+        </div>
+        <div style={{ textAlign: 'center', fontSize: '0.8rem' }}>
+          <Link to="/" className="link" style={{ color: 'var(--ink-3)' }}>RollOne home</Link>
         </div>
       </div>
     );
   }
 
-  // 2. Student Dashboard Screen
+  const totals = courses.reduce(
+    (acc, c) => ({ present: acc.present + (c.attendance?.present || 0), total: acc.total + (c.attendance?.total || 0) }),
+    { present: 0, total: 0 }
+  );
+  const overall = totals.total ? totals.present / totals.total : null;
+  const atRisk = courses.filter((c) => c.attendance?.total > 0 && c.attendance.percentage < 75).length;
+
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-main)', padding: '2rem 1rem' }}>
-      <div style={{ maxWidth: '840px', margin: '0 auto' }}>
-        {/* Top Header */}
-        <header style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          marginBottom: '2rem', 
-          paddingBottom: '1.25rem', 
-          borderBottom: '1px solid var(--border-subtle)',
-          flexWrap: 'wrap',
-          gap: '1rem'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ background: 'var(--accent-emerald)', padding: '0.45rem', borderRadius: '10px', display: 'flex' }}>
-              <GraduationCap size={22} color="#ffffff" />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>RollOne Student Portal</div>
-              <h1 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0 }}>{student?.name || student?.rollNumber}</h1>
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.825rem' }}>
-                <span className="mono">{student?.rollNumber}</span> • {student?.email}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <ThemeToggle />
-            <button onClick={handleLogout} className="btn btn-secondary" style={{ padding: '0.45rem 0.85rem', fontSize: '0.825rem' }} title="Sign Out">
-              <LogOut size={16} /> Sign Out
-            </button>
-          </div>
-        </header>
-
-        {/* 75% Criteria Info Pill */}
-        <div style={{ 
-          background: 'var(--bg-card)', 
-          border: '1px solid var(--border-subtle)', 
-          borderRadius: '12px', 
-          padding: '1rem 1.25rem', 
-          marginBottom: '2rem', 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '0.75rem'
-        }}>
-          <div style={{ fontSize: '0.875rem' }}>
-            <strong>UGC Attendance Regulation:</strong> Maintain at least <strong>75%</strong> in each enrolled course to be eligible for end-semester examinations.
-          </div>
-          <Link to="/scan" className="btn btn-emerald" style={{ padding: '0.45rem 1rem', fontSize: '0.825rem' }}>
-            Open Mobile Scanner
-          </Link>
+    <div className="portal">
+      <div className="portal-top">
+        <Logo />
+        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+          <ThemeToggle />
+          <button onClick={handleLogout} className="btn btn-ghost btn-sm"><LogOut size={14} /> Sign out</button>
         </div>
-
-        {/* Enrolled Courses Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0 }}>Enrolled Courses ({courses.length})</h2>
-          {loadingCourses && <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Refreshing...</span>}
-        </div>
-        
-        {/* Course Cards */}
-        {courses.length === 0 && !loadingCourses ? (
-          <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-secondary)' }}>
-            No courses found for your roll number. Contact your department administrator to enroll.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {courses.map(item => {
-              const course = item.course;
-              const attendance = item.attendance || { present: 0, total: 0, percentage: 0 };
-              const percentage = Math.round(attendance.percentage);
-              const isExpanded = expandedCourse === course._id;
-
-              return (
-                <div key={course._id} className="card card-hover" style={{ padding: 0, overflow: 'hidden' }}>
-                  <div 
-                    style={{ padding: '1.25rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: 'var(--bg-surface)' }}
-                    onClick={() => toggleCourse(course._id)}
-                  >
-                    <div style={{ flex: 1, paddingRight: '1rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                        <span className="mono" style={{ fontWeight: 800, color: 'var(--accent-emerald)', fontSize: '0.95rem' }}>
-                          {course.courseCode}
-                        </span>
-                        <span>•</span>
-                        <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{course.courseName}</span>
-                      </div>
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.825rem' }}>
-                        Branch: {item.branch} • Sem {course.semester} • {course.credits} Credits • {attendance.present} / {attendance.total} Lectures
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                      {getStatusBadge(percentage)}
-                      {isExpanded ? <ChevronUp size={20} color="var(--text-muted)" /> : <ChevronDown size={20} color="var(--text-muted)" />}
-                    </div>
-                  </div>
-                  
-                  {/* Expanded Session Ledger */}
-                  {isExpanded && (
-                    <div style={{ padding: '1.25rem 1.5rem', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-main)' }}>
-                      <h3 style={{ fontSize: '0.925rem', fontWeight: 700, marginBottom: '0.75rem' }}>Lecture Breakdown</h3>
-                      {loadingSessions ? (
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '1rem 0' }}>Loading lecture sessions...</div>
-                      ) : sessions.length === 0 ? (
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '0.5rem 0' }}>No attendance records recorded for this course yet.</div>
-                      ) : (
-                        <div className="table-container">
-                          <table className="table">
-                            <thead>
-                              <tr>
-                                <th>Date & Time</th>
-                                <th>Session Status</th>
-                                <th>Your Attendance</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sessions.map(s => (
-                                <tr key={s._id}>
-                                  <td className="mono" style={{ fontSize: '0.85rem' }}>
-                                    {new Date(s.sessionId?.sessionDate || s.createdAt).toLocaleString()}
-                                  </td>
-                                  <td>
-                                    <span className="badge badge-zinc" style={{ fontSize: '0.75rem' }}>
-                                      {s.sessionId?.status || 'CONCLUDED'}
-                                    </span>
-                                  </td>
-                                  <td>
-                                    <span className={`badge ${s.status === 'PRESENT' ? 'badge-emerald' : 'badge-zinc'}`} style={{ fontSize: '0.75rem' }}>
-                                      {s.status === 'PRESENT' ? '✅ PRESENT' : '❌ ABSENT'}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
+
+      <div className="portal-hero">
+        <div>
+          <div className="eyebrow">
+            <span className="mono" style={{ letterSpacing: 0, textTransform: 'none' }}>{student?.rollNumber}</span>
+            {student?.department ? ` · ${student.department}` : ''}
+          </div>
+          <h1 style={{ marginTop: '0.35rem' }}>{student?.name || student?.rollNumber}</h1>
+          <div style={{ marginTop: '1rem' }}>
+            <Link to="/scan" className="btn btn-primary"><ScanLine size={16} /> Check in to a lecture</Link>
+          </div>
+        </div>
+        <div className="portal-overall">
+          <div className="eyebrow">Overall</div>
+          <div className="portal-overall-num" style={{ marginTop: '0.35rem' }}>{overall == null ? '—' : `${Math.round(overall * 100)}%`}</div>
+          <div className="muted" style={{ fontSize: '0.8rem', marginTop: '0.35rem' }}>
+            {totals.present} of {totals.total} lecture{totals.total === 1 ? '' : 's'}{atRisk ? ` · ${atRisk} course${atRisk > 1 ? 's' : ''} below 75%` : ''}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.25rem 1rem', marginBottom: '0.9rem' }}>
+        <h2 style={{ fontSize: '1rem' }}>Courses</h2>
+        <span className="muted" style={{ fontSize: '0.8rem' }}>
+          {loadingCourses ? 'Refreshing…' : 'The line on each bar marks 75%, the exam eligibility cut-off.'}
+        </span>
+      </div>
+
+      {courses.length === 0 && !loadingCourses ? (
+        <div className="panel empty">
+          <BookOpen size={30} />
+          <h3>No courses yet</h3>
+          <p>You aren’t enrolled in any course. Ask your faculty to add your roll number.</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {courses.map((item) => (
+            <CourseRow
+              key={item.course._id + item.branch}
+              item={item}
+              token={token}
+              open={expanded === item.course._id}
+              onToggle={() => setExpanded(expanded === item.course._id ? null : item.course._id)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
-

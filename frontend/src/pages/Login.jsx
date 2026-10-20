@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { GraduationCap, Lock, Mail, ArrowRight } from 'lucide-react';
+import AuthLayout from '../components/AuthLayout';
 
 export default function Login() {
   const { login } = useAuth();
@@ -15,83 +16,69 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setError('');
-
     try {
       await login(email, password);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.error || 'Invalid credentials');
+      setError(err.response?.data?.error || 'Could not sign you in');
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ minHeight: '85vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-      <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '2.5rem 2rem' }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{ 
-            width: '48px', 
-            height: '48px', 
-            background: 'var(--border-subtle)', 
-            borderRadius: '12px', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            margin: '0 auto 1rem'
-          }}>
-            <GraduationCap size={28} color="var(--accent-emerald)" />
-          </div>
-          <h1 style={{ fontSize: '1.6rem', fontWeight: 800 }}>Faculty Sign In</h1>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Access RollOne lecture control & projector portal
-          </p>
+    <AuthLayout>
+      <div className="eyebrow">Faculty</div>
+      <h1 style={{ marginTop: '0.4rem' }}>Sign in to RollOne</h1>
+      <p>Start a lecture, open the projector and download the register.</p>
+
+      {error && (
+        <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+          <AlertCircle size={16} />
+          <span>{error}</span>
         </div>
+      )}
 
-        {error && (
-          <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--accent-red)', color: 'var(--accent-red)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label className="form-label">Campus Email</label>
-            <input 
-              type="email" 
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)}
-              className="form-input"
-              required 
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input 
-              type="password" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)}
-              className="form-input"
-              required 
-            />
-          </div>
-
-          <button type="submit" disabled={loading} className="btn btn-emerald" style={{ width: '100%', padding: '0.85rem', marginTop: '1rem', fontSize: '0.95rem' }}>
-            {loading ? 'Authenticating...' : 'Sign In'} <ArrowRight size={16} />
-          </button>
-        </form>
-
-        <div style={{ marginTop: '1.75rem', textAlign: 'center', fontSize: '0.825rem', color: 'var(--text-secondary)' }}>
-          Don't have an account?{' '}
-          <Link to="/signup" style={{ color: 'var(--accent-cyan)', textDecoration: 'none', fontWeight: 600 }}>
-            Create Account
-          </Link>
+      <form onSubmit={handleSubmit}>
+        <div className="field">
+          <label className="label" htmlFor="email">Email</label>
+          <input
+            id="email"
+            type="email"
+            className="input"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            autoFocus
+            required
+          />
         </div>
-
-        <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-          Student? <Link to="/scan" style={{ color: 'var(--accent-emerald)' }}>Open Mobile Scanner</Link>
+        <div className="field">
+          <label className="label" htmlFor="password">Password</label>
+          <input
+            id="password"
+            type="password"
+            className="input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
         </div>
+        <button type="submit" disabled={loading} className="btn btn-primary btn-lg btn-block" style={{ marginTop: '0.5rem' }}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+
+      <div className="divider" style={{ margin: '1.75rem 0 1.25rem' }} />
+      <div style={{ fontSize: '0.86rem', color: 'var(--ink-2)', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+        <span>
+          Have an invite code? <Link to="/signup" className="link">Create a faculty account</Link>
+        </span>
+        <span>
+          Student? <Link to="/scan" className="link">Mark attendance</Link> or{' '}
+          <Link to="/my-attendance" className="link">check your record</Link>
+        </span>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
