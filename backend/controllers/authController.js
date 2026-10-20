@@ -1,12 +1,13 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { UNIQUE_VIOLATION } from '../db/index.js';
+import { findUserByEmail, createUser, verifyUserPassword } from '../repositories/users.js';
 import { JWT_SECRET, FACULTY_INVITE_CODE } from '../config.js';
 
 const generateToken = (id) => jwt.sign({ id }, JWT_SECRET, { expiresIn: '7d' });
 
 const publicUser = (user) => ({
-  id: user._id,
+  id: user.id,
   name: user.name,
   email: user.email,
   role: user.role,
@@ -38,14 +39,17 @@ export const register = async (req, res) => {
       return res.status(400).json({ error: 'Name, email and a password of at least 8 characters are required' });
     }
 
-    const existing = await User.findOne({ email: String(email).toLowerCase().trim() });
+    const existing = await findUserByEmail(String(email));
     if (existing) {
       return res.status(400).json({ error: 'Account already exists with this email' });
     }
 
-    const user = await User.create({ name, email, password, role: 'faculty', department });
-    res.status(201).json({ token: generateToken(user._id), user: publicUser(user) });
+    const user = await createUser({ name, email: String(email), password: String(password), role: 'faculty', department });
+    res.status(201).json({ token: generateToken(user.id), user: publicUser(user) });
   } catch (err) {
+    if (err.code === UNIQUE_VIOLATION) {
+      return res.status(400).json({ error: 'Account already exists with this email' });
+    }
     res.status(500).json({ error: err.message });
   }
 };
@@ -53,13 +57,12 @@ export const register = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email: String(email || '').toLowerCase().trim() });
-
-    if (!user || !(await user.comparePassword(String(password || '')))) {
+    const user = await verifyUserPassword(String(email || ''), String(password || ''));
+    if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    res.json({ token: generateToken(user._id), user: publicUser(user) });
+    res.json({ token: generateToken(user.id), user: publicUser(user) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,12 +1,20 @@
-import crypto from 'crypto';
-import mongoose from 'mongoose';
 import axios from 'axios';
 import FormData from 'form-data';
 import fs from 'fs';
-import Session from '../models/Session.js';
-import Student from '../models/Student.js';
-import Claim from '../models/Claim.js';
-import AttendanceRecord from '../models/AttendanceRecord.js';
+import { isUuid } from '../db/index.js';
+import { findSessionById, findOwnedSession, getSessionSecret } from '../repositories/sessions.js';
+import { getFaceEmbedding } from '../repositories/students.js';
+import {
+  hasAttendanceRecord,
+  startClaim,
+  findLiveClaim,
+  promoteClaim,
+  recordWrongPin,
+  deleteClaim,
+  commitAttendance,
+  liveRoster,
+  countActiveEnrollmentsForSession
+} from '../repositories/attendance.js';
 import { TokenService } from '../services/tokenService.js';
 import { GeofenceService } from '../services/geofenceService.js';
 import { StaggerService } from '../services/staggerService.js';
@@ -22,17 +30,13 @@ import {
 
 const MATCH_THRESHOLD = 0.65;
 
-const newClaimTicket = () => `tkt_${crypto.randomBytes(12).toString('hex')}`;
-
-const isExpired = (claim, now = Date.now()) => !claim.expireAt || claim.expireAt.getTime() <= now;
-
 const acceptedResponse = (claim, student, classroom) => ({
   status: 'CLAIM_ACCEPTED',
   claimTicket: claim.claimTicket,
   assignedDelayMs: claim.assignedDelayMs,
   expiresInSeconds: Math.max(0, Math.round((claim.expireAt.getTime() - Date.now()) / 1000)),
   student: {
-    id: student._id,
+    id: student.id,
     rollNumber: student.rollNumber,
     name: student.name,
     isEnrolled: student.isEnrolled
@@ -41,12 +45,15 @@ const acceptedResponse = (claim, student, classroom) => ({
 });
 
 // Moves a claim into the biometric phase and gives it a staggered upload slot.
-const promoteToBiometrics = async (claim, sessionId) => {
-  claim.status = 'AWAITING_BIOMETRICS';
-  claim.assignedDelayMs = StaggerService.assignUploadDelay(sessionId);
-  claim.expireAt = new Date(Date.now() + CLAIM_TTL_MS);
-  await claim.save();
-  return claim;
+const promoteToBiometrics = (claim, sessionId) =>
+  promoteClaim(claim.id, { assignedDelayMs: StaggerService.assignUploadDelay(sessionId), ttlMs: CLAIM_TTL_MS });
+
+// The session with its classroom, plus the secret that only token checks may read
+const loadActiveSession = async (sessionId) => {
+  const secret = await getSessionSecret(sessionId);
+  if (!secret || secret.status !== 'ACTIVE') return null;
+  const session = await findSessionById(sessionId);
+  return session && { session, totpSecret: secret.totp_secret };
 };
 
 /**
@@ -64,16 +71,17 @@ export const claimAttendance = async (req, res) => {
     if (!sessionId || !scannedToken) {
       return res.status(400).json({ error: 'Missing required parameters (sessionId, scannedToken)' });
     }
-    if (!mongoose.isValidObjectId(sessionId)) {
+    if (!isUuid(String(sessionId))) {
       return res.status(400).json({ code: 'INVALID_QR', error: 'This QR code is not a valid RollOne session code.' });
     }
 
-    const session = await Session.findById(sessionId).select('+totpSecret').populate('classroomId');
-    if (!session || session.status !== 'ACTIVE') {
+    const loaded = await loadActiveSession(String(sessionId));
+    if (!loaded) {
       return res.status(400).json({ code: 'SESSION_INACTIVE', error: 'Lecture session is not currently active' });
     }
+    const { session, totpSecret } = loaded;
 
-    const tokenCheck = TokenService.verifyToken(session.totpSecret, session._id.toString(), scannedToken, {
+    const tokenCheck = TokenService.verifyToken(totpSecret, session.id, scannedToken, {
       intervalSeconds: session.tokenIntervalSeconds || 4,
       graceMs: TOKEN_GRACE_MS
     });
@@ -109,54 +117,34 @@ export const claimAttendance = async (req, res) => {
       }
     }
 
-    const alreadyMarked = await AttendanceRecord.exists({ sessionId: session._id, studentId: student._id });
-    if (alreadyMarked) {
+    if (await hasAttendanceRecord(session.id, student.id)) {
       return res.status(409).json({ code: 'ALREADY_MARKED', error: `Attendance already marked for ${student.rollNumber}` });
     }
 
-    const now = Date.now();
-    let claim = await Claim.findOne({ sessionId: session._id, studentId: student._id });
-    if (claim && isExpired(claim, now)) {
-      await Claim.deleteOne({ _id: claim._id });
-      claim = null;
-    }
+    const needsPin = session.requirePin;
+    const { claim, reused } = await startClaim({
+      sessionId: session.id,
+      studentId: student.id,
+      rollNumber: student.rollNumber,
+      clientGps,
+      tokenStep: tokenCheck.step,
+      status: needsPin ? 'AWAITING_PIN' : 'AWAITING_BIOMETRICS',
+      pinWindowMs: needsPin ? PIN_WINDOW_MS : null,
+      assignedDelayMs: needsPin ? 0 : StaggerService.assignUploadDelay(session.id),
+      ttlMs: CLAIM_TTL_MS
+    });
 
     // Idempotent: a second scan while already in the biometric phase returns the same ticket.
-    if (claim && claim.status === 'AWAITING_BIOMETRICS') {
+    if (reused || !needsPin) {
       return res.status(200).json(acceptedResponse(claim, student, classroom));
     }
 
-    if (!claim) {
-      claim = new Claim({
-        claimTicket: newClaimTicket(),
-        sessionId: session._id,
-        studentId: student._id,
-        rollNumber: student.rollNumber,
-        clientGps: {
-          latitude: clientGps?.latitude,
-          longitude: clientGps?.longitude,
-          accuracyMeters: clientGps?.accuracyMeters
-        }
-      });
-    }
-    claim.tokenStep = tokenCheck.step;
-    claim.expireAt = new Date(now + CLAIM_TTL_MS);
-
-    if (session.requirePin) {
-      claim.status = 'AWAITING_PIN';
-      claim.pinDeadline = new Date(now + PIN_WINDOW_MS);
-      claim.pinAttempts = 0;
-      await claim.save();
-      return res.status(200).json({
-        status: 'PIN_REQUIRED',
-        claimTicket: claim.claimTicket,
-        pinWindowSeconds: Math.round(PIN_WINDOW_MS / 1000),
-        attemptsAllowed: MAX_PIN_ATTEMPTS
-      });
-    }
-
-    await promoteToBiometrics(claim, session._id);
-    return res.status(200).json(acceptedResponse(claim, student, classroom));
+    return res.status(200).json({
+      status: 'PIN_REQUIRED',
+      claimTicket: claim.claimTicket,
+      pinWindowSeconds: Math.round(PIN_WINDOW_MS / 1000),
+      attemptsAllowed: MAX_PIN_ATTEMPTS
+    });
   } catch (err) {
     console.error('[CLAIM ERROR]', err.message);
     res.status(500).json({ error: 'Claim failed. Please try again.' });
@@ -177,42 +165,34 @@ export const submitPin = async (req, res) => {
     }
 
     const now = Date.now();
-    const claim = await Claim.findOne({ claimTicket: String(claimTicket), studentId: req.student._id });
-    if (!claim || isExpired(claim, now)) {
+    const claim = await findLiveClaim(claimTicket, req.student.id);
+    if (!claim) {
       return res.status(400).json({ code: 'CLAIM_EXPIRED', error: 'Your scan expired. Please scan the QR code again.' });
     }
 
-    const session = await Session.findById(claim.sessionId).select('+totpSecret').populate('classroomId');
-    if (!session || session.status !== 'ACTIVE') {
+    const loaded = await loadActiveSession(claim.sessionId);
+    if (!loaded) {
       return res.status(400).json({ code: 'SESSION_INACTIVE', error: 'Lecture session is not currently active' });
     }
+    const { session, totpSecret } = loaded;
 
     if (claim.status === 'AWAITING_BIOMETRICS') {
       return res.status(200).json(acceptedResponse(claim, req.student, session.classroomId));
     }
-    if (claim.status !== 'AWAITING_PIN') {
-      return res.status(400).json({ code: 'CLAIM_EXPIRED', error: 'Your scan expired. Please scan the QR code again.' });
-    }
     if (!claim.pinDeadline || claim.pinDeadline.getTime() < now) {
-      await Claim.deleteOne({ _id: claim._id });
+      await deleteClaim(claim.id);
       return res.status(400).json({ code: 'PIN_TIMEOUT', error: 'Took too long to enter the PIN. Please scan again.' });
     }
 
-    const pinCheck = TokenService.verifyPin(session.totpSecret, session._id.toString(), pin, {
+    const pinCheck = TokenService.verifyPin(totpSecret, session.id, pin, {
       intervalSeconds: session.tokenIntervalSeconds || 4,
       graceMs: PIN_GRACE_MS
     });
 
     if (!pinCheck.valid) {
-      // Atomic increment so parallel guesses cannot exceed the attempt limit.
-      const updated = await Claim.findOneAndUpdate(
-        { _id: claim._id, status: 'AWAITING_PIN' },
-        { $inc: { pinAttempts: 1 } },
-        { new: true }
-      );
-      const attempts = updated ? updated.pinAttempts : MAX_PIN_ATTEMPTS;
+      const attempts = (await recordWrongPin(claim.id)) ?? MAX_PIN_ATTEMPTS;
       if (attempts >= MAX_PIN_ATTEMPTS) {
-        await Claim.deleteOne({ _id: claim._id });
+        await deleteClaim(claim.id);
         return res.status(400).json({ code: 'PIN_LOCKED', error: 'Wrong PIN. Please scan the QR code again.' });
       }
       return res.status(400).json({
@@ -222,8 +202,11 @@ export const submitPin = async (req, res) => {
       });
     }
 
-    await promoteToBiometrics(claim, session._id);
-    return res.status(200).json(acceptedResponse(claim, req.student, session.classroomId));
+    const promoted = await promoteToBiometrics(claim, session.id);
+    if (!promoted) {
+      return res.status(400).json({ code: 'CLAIM_EXPIRED', error: 'Your scan expired. Please scan the QR code again.' });
+    }
+    return res.status(200).json(acceptedResponse(promoted, req.student, session.classroomId));
   } catch (err) {
     console.error('[PIN ERROR]', err.message);
     res.status(500).json({ error: 'PIN check failed. Please try again.' });
@@ -244,8 +227,8 @@ export const verifyBiometrics = async (req, res) => {
       return res.status(400).json({ error: 'claimTicket is required' });
     }
 
-    const claim = await Claim.findOne({ claimTicket: String(claimTicket), studentId: req.student._id });
-    if (!claim || isExpired(claim) || claim.status !== 'AWAITING_BIOMETRICS') {
+    const claim = await findLiveClaim(claimTicket, req.student.id);
+    if (!claim || claim.status !== 'AWAITING_BIOMETRICS') {
       cleanupUploads();
       return res.status(400).json({
         code: 'CLAIM_EXPIRED',
@@ -253,23 +236,20 @@ export const verifyBiometrics = async (req, res) => {
       });
     }
 
-    const session = await Session.findById(claim.sessionId).populate('classroomId');
+    const session = await findSessionById(claim.sessionId);
     if (!session || session.status !== 'ACTIVE') {
       cleanupUploads();
       return res.status(400).json({ code: 'SESSION_INACTIVE', error: 'Lecture session is not currently active' });
     }
 
-    const student = await Student.findById(req.student._id).select('+faceEmbedding');
-    if (!student) {
-      cleanupUploads();
-      return res.status(404).json({ error: 'Student not found' });
-    }
+    const student = req.student;
+    const storedEmbedding = await getFaceEmbedding(student.id);
 
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No face images uploaded' });
     }
 
-    const wasEnrolled = Array.isArray(student.faceEmbedding) && student.faceEmbedding.length > 0;
+    const wasEnrolled = Array.isArray(storedEmbedding) && storedEmbedding.length > 0;
     if (!wasEnrolled && !ALLOW_SELF_ENROLLMENT) {
       cleanupUploads();
       return res.status(400).json({
@@ -285,7 +265,7 @@ export const verifyBiometrics = async (req, res) => {
       form.append('images', fs.createReadStream(f.path));
     }
     if (wasEnrolled) {
-      form.append('enrolled_embedding', JSON.stringify(student.faceEmbedding));
+      form.append('enrolled_embedding', JSON.stringify(storedEmbedding));
     }
     form.append('threshold', String(MATCH_THRESHOLD));
     form.append('require_liveness', requireLiveness ? 'true' : 'false');
@@ -309,6 +289,7 @@ export const verifyBiometrics = async (req, res) => {
 
     let status = 'PRESENT';
     let flagReason = null;
+    const face = {};
 
     if (!wasEnrolled) {
       // Self-enrollment by the logged-in owner of this account. Saved as FLAGGED
@@ -319,11 +300,7 @@ export const verifyBiometrics = async (req, res) => {
           error: 'Could not detect a face. Center your face in good lighting and try again.'
         });
       }
-      student.faceEmbedding = probeEmbedding;
-      student.isEnrolled = true;
-      student.enrolledAt = new Date();
-      student.enrollmentSource = 'SELF_SCAN';
-      await student.save();
+      face.selfEnroll = probeEmbedding;
       status = 'FLAGGED';
       flagReason = 'FIRST_SELF_ENROLLMENT';
     } else if (!matched) {
@@ -342,60 +319,44 @@ export const verifyBiometrics = async (req, res) => {
     if (
       wasEnrolled &&
       Array.isArray(probeEmbedding) &&
-      probeEmbedding.length === student.faceEmbedding.length &&
+      probeEmbedding.length === storedEmbedding.length &&
       typeof similarity === 'number' &&
       similarity >= CENTROID_CONFIDENCE_THRESHOLD
     ) {
-      try {
-        const blended = student.faceEmbedding.map((val, i) => (1 - BLEND_ALPHA) * val + BLEND_ALPHA * probeEmbedding[i]);
-        const norm = Math.sqrt(blended.reduce((sum, v) => sum + v * v, 0));
-        student.faceEmbedding = norm > 0 ? blended.map((v) => v / norm) : blended;
-        student.embeddingVersion = (student.embeddingVersion || 1) + 1;
-        student.embeddingUpdatedAt = new Date();
-        await student.save();
-      } catch (centroidErr) {
-        console.error(`[ADAPTIVE-CENTROID] Failed for ${student.rollNumber}:`, centroidErr.message);
-      }
+      const blended = storedEmbedding.map((val, i) => (1 - BLEND_ALPHA) * val + BLEND_ALPHA * probeEmbedding[i]);
+      const norm = Math.sqrt(blended.reduce((sum, v) => sum + v * v, 0));
+      face.centroid = norm > 0 ? blended.map((v) => v / norm) : blended;
     }
 
-    try {
-      const record = await AttendanceRecord.create({
-        sessionId: session._id,
-        studentId: student._id,
-        rollNumber: student.rollNumber,
-        studentName: student.name,
-        courseCode: session.courseCode,
-        roomCode: session.classroomId?.roomCode || 'N/A',
-        status,
-        flagReason,
-        verificationMetrics: {
-          cosineSimilarity: typeof similarity === 'number' ? similarity : 1.0,
-          threshold: MATCH_THRESHOLD,
-          livenessScore: liveness?.score ?? 1.0,
-          livenessPassed: liveness?.is_live !== false
-        }
-      });
+    // Record, session counter, face template and claim cleanup are one transaction
+    const result = await commitAttendance({
+      session,
+      student,
+      claimId: claim.id,
+      status,
+      flagReason,
+      metrics: {
+        cosineSimilarity: typeof similarity === 'number' ? similarity : 1.0,
+        threshold: MATCH_THRESHOLD,
+        livenessScore: liveness?.score ?? 1.0,
+        livenessPassed: liveness?.is_live !== false
+      },
+      face
+    });
 
-      const counter = status === 'PRESENT' ? 'stats.presentCount' : 'stats.flaggedCount';
-      await Session.findByIdAndUpdate(session._id, { $inc: { [counter]: 1 } });
-      await Claim.deleteOne({ _id: claim._id });
-
-      return res.status(200).json({
-        status,
-        message: status === 'PRESENT'
-          ? 'Attendance recorded successfully'
-          : 'Attendance recorded. Your face was enrolled and will be confirmed by your faculty.',
-        student: { rollNumber: student.rollNumber, name: student.name },
-        metrics: { similarity: typeof similarity === 'number' ? similarity : null, markedAt: record.markedAt }
-      });
-    } catch (dbErr) {
-      if (dbErr.code === 11000) {
-        // Idempotency: the compound unique index (sessionId, studentId) rejected a duplicate.
-        await Claim.deleteOne({ _id: claim._id });
-        return res.status(200).json({ status: 'PRESENT', message: 'Attendance already recorded for this session' });
-      }
-      throw dbErr;
+    if (result.alreadyMarked) {
+      // Idempotency: the UNIQUE (session_id, student_id) constraint rejected a duplicate.
+      return res.status(200).json({ status: 'PRESENT', message: 'Attendance already recorded for this session' });
     }
+
+    return res.status(200).json({
+      status,
+      message: status === 'PRESENT'
+        ? 'Attendance recorded successfully'
+        : 'Attendance recorded. Your face was enrolled and will be confirmed by your faculty.',
+      student: { rollNumber: student.rollNumber, name: student.name },
+      metrics: { similarity: typeof similarity === 'number' ? similarity : null, markedAt: result.record.markedAt }
+    });
   } catch (err) {
     console.error('[VERIFY ERROR]', err.response?.data || err.message);
     cleanupUploads();
@@ -409,26 +370,13 @@ export const verifyBiometrics = async (req, res) => {
  */
 export const getLiveRoster = async (req, res) => {
   try {
-    const { sessionId } = req.params;
-    if (!mongoose.isValidObjectId(sessionId)) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-
-    const filter = req.user.role === 'admin' ? { _id: sessionId } : { _id: sessionId, facultyId: req.user._id };
-    const session = await Session.findOne(filter);
+    const session = await findOwnedSession(req.params.sessionId, req.user);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    let enrolledCount = 0;
-    if (session.courseId) {
-      const { default: Enrollment } = await import('../models/Enrollment.js');
-      enrolledCount = await Enrollment.countDocuments({ courseId: session.courseId, status: 'active' });
-    }
-
-    const records = await AttendanceRecord.find({ sessionId })
-      .sort({ markedAt: -1 })
-      .select('rollNumber studentName status flagReason verificationMetrics markedAt');
+    const enrolledCount = await countActiveEnrollmentsForSession(session);
+    const records = await liveRoster(session.id);
 
     res.json({ count: records.length, enrolledCount, roster: records });
   } catch (err) {

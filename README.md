@@ -25,15 +25,15 @@ Phone-based lecture attendance: the projector shows a rotating QR code, students
 | Service | Stack | Port |
 | --- | --- | --- |
 | Frontend | React 19 + Vite | 5173 (dev) |
-| API gateway | Node.js + Express + MongoDB | 3001 |
+| API gateway | Node.js + Express + PostgreSQL | 3001 |
 | ML engine | Python + PyTorch FaceNet (InceptionResnetV1) | 5001 |
 
 ## Setup
 
 ```bash
-cd backend && cp .env.example .env   # fill in MONGODB_URI and JWT_SECRET
+cd backend && cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET (see docs/POSTGRES_SETUP.md)
 npm install && npm start
-npm test                             # token window, PIN, claim/verify flow, rate limits (Node 22.3+)
+TEST_DATABASE_URL=... npm test      # needs an empty Postgres database, which it wipes (Node 22.3+)
 ```
 
 For a local demo database, set `SEED_DEMO=true` (development only); the demo faculty password is printed once in the server log.
