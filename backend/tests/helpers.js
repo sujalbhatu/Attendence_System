@@ -14,7 +14,14 @@ process.env.FACULTY_INVITE_CODE ??= 'test-invite-code';
 process.env.CORS_ORIGINS ??= 'https://rollone.example';
 process.env.ALLOW_SELF_ENROLLMENT ??= 'false';
 
-const { query, closePool } = await import('../db/index.js');
+const { query, closePool: closeDbPool } = await import('../db/index.js');
+// REDIS_URL=mock (or a real URL) runs the same suite with Redis on; unset keeps it off
+const { initRedis, closeRedis } = await import('../lib/redis.js');
+await initRedis();
+const closePool = async () => {
+  await closeDbPool();
+  await closeRedis();
+};
 const { migrate } = await import('../db/migrate.js');
 const { createUser } = await import('../repositories/users.js');
 const { createStudent, enrollFaceEmbedding } = await import('../repositories/students.js');

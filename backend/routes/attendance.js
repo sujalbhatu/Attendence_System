@@ -13,7 +13,7 @@ const upload = multer({
 });
 
 // Keyed by student account, not IP: a whole class shares one campus Wi-Fi IP.
-const studentLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyFn: byStudent });
+const studentLimiter = rateLimit({ name: 'student-attendance', windowMs: 60 * 1000, max: 20, keyFn: byStudent });
 
 const router = express.Router();
 

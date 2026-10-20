@@ -2,6 +2,7 @@ import { SEED_DEMO } from './config.js'; // loads .env and fails fast on missing
 import { createApp } from './app.js';
 import { getPool } from './db/index.js';
 import { migrate } from './db/migrate.js';
+import { initRedis } from './lib/redis.js';
 import { seedDemoData } from './db/seed.js';
 import { deleteExpiredClaims } from './repositories/attendance.js';
 
@@ -14,6 +15,9 @@ async function start() {
 
   // Applies any new db/migrations/*.sql files (safe to run on every start)
   await migrate();
+
+  // Optional: shared state for rate limits, claims and live updates across instances
+  if (await initRedis()) console.log('[INFO] Redis enabled');
   if (SEED_DEMO) await seedDemoData();
 
   // Postgres has no TTL index, so expired claims are swept periodically

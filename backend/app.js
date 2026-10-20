@@ -2,6 +2,7 @@ import { CORS_ORIGINS, IS_PROD } from './config.js'; // loads .env and fails fas
 import express from 'express';
 import cors from 'cors';
 import { query } from './db/index.js';
+import { getRedis } from './lib/redis.js';
 import authRoutes from './routes/auth.js';
 import classroomRoutes from './routes/classrooms.js';
 import studentRoutes from './routes/students.js';
@@ -51,11 +52,23 @@ export function createApp() {
     } catch {
       database = 'disconnected';
     }
+    // Redis is optional: "off" when not configured, never a reason to fail health
+    let redis = 'off';
+    const r = getRedis();
+    if (r) {
+      try {
+        await r.ping();
+        redis = 'connected';
+      } catch {
+        redis = 'unreachable';
+      }
+    }
     res.status(database === 'connected' ? 200 : 503).json({
       status: database === 'connected' ? 'ok' : 'degraded',
       service: 'CampusTrack Gateway',
       timestamp: new Date(),
-      database
+      database,
+      redis
     });
   });
 
