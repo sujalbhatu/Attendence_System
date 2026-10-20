@@ -4,18 +4,23 @@ import bcrypt from 'bcryptjs';
 const StudentSchema = new mongoose.Schema({
   rollNumber: { type: String, required: true, unique: true, uppercase: true, trim: true },
   name: { type: String, required: true, trim: true },
-  password: { type: String, default: null },
+  // select:false — password hashes and face templates are never returned by a
+  // query (or a populate) unless the caller asks with .select('+field').
+  password: { type: String, default: null, select: false },
+  mustChangePassword: { type: Boolean, default: false },
   email: { type: String, lowercase: true, trim: true },
   department: { type: String, default: 'Computer Science & Engineering' },
   batch: { type: String, default: '2023-2027' },
   section: { type: String, default: 'A' },
   faceEmbedding: {
     type: [Number], // 512-dimensional FaceNet vector
-    default: null
+    default: null,
+    select: false
   },
   photoUrl: { type: String, default: null },
   isEnrolled: { type: Boolean, default: false },
   enrolledAt: { type: Date, default: null },
+  enrollmentSource: { type: String, enum: ['FACULTY', 'SELF_SCAN', null], default: null },
   embeddingVersion: { type: Number, default: 1 },
   embeddingUpdatedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
@@ -34,8 +39,9 @@ StudentSchema.pre('save', async function(next) {
   }
 });
 
+// Requires the document to have been loaded with .select('+password').
 StudentSchema.methods.comparePassword = async function(candidatePassword) {
-  if (!this.password) return false;
+  if (!this.password || !candidatePassword) return false;
   return await bcrypt.compare(candidatePassword, this.password);
 };
 

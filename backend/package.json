@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "campustrack-backend",
   "version": "1.0.0",
   "description": "Production-Grade Campus Attendance Platform Backend",
@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test --experimental-test-module-mocks tests/*.test.js",
+    "set-faculty-password": "node scripts/setFacultyPassword.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
@@ -17,5 +19,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.2",
     "multer": "^1.4.5-lts.1"
+  },
+  "engines": {
+    "node": ">=22.3"
   }
 }

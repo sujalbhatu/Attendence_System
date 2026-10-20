@@ -8,6 +8,7 @@ const AttendanceRecordSchema = new mongoose.Schema({
   courseCode: { type: String, required: true },
   roomCode: { type: String, required: true },
   status: { type: String, enum: ['PRESENT', 'ABSENT', 'LATE', 'FLAGGED'], default: 'PRESENT' },
+  flagReason: { type: String, default: null }, // e.g. FIRST_SELF_ENROLLMENT, shown to faculty for review
   
   verificationMetrics: {
     cosineSimilarity: { type: Number, required: true },
