@@ -13,12 +13,12 @@ Phone-based lecture attendance: the projector shows a rotating QR code, students
 ## Security model
 
 - Session secrets are `select: false` and never leave the server; the QR feed needs a projector token scoped to one session.
-- Student passwords default to the roll number only until first login, when a new password is required before marking attendance.
+- Students get a temporary password from faculty (Students page: add student or Reset password) and must set their own on first login before marking attendance. There is no roll-number default password.
 - Face templates and password hashes are `select: false` and never returned by the API.
 - Faculty sign-up is invite-only (`FACULTY_INVITE_CODE`); the role is always `faculty`.
 - `JWT_SECRET` is required — the server refuses to start without it. Tokens are accepted only in the `Authorization` header.
 - Per-account rate limits on claim/PIN/verify and on logins (students share one campus IP, so limits are not per-IP).
-- First-scan self-enrollment (when `ALLOW_SELF_ENROLLMENT=true`) records attendance as `FLAGGED` for faculty review.
+- Faces are enrolled by faculty. Optional first-scan self-enrollment (off by default; `ALLOW_SELF_ENROLLMENT=true`) records attendance as `FLAGGED` for faculty review.
 
 ## Services
 

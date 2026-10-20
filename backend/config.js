@@ -42,8 +42,8 @@ export const MAX_PIN_ATTEMPTS = intEnv('MAX_PIN_ATTEMPTS', 2);
 export const CLAIM_TTL_MS = intEnv('CLAIM_TTL_MS', 60000);
 
 // First-scan self-enrollment by a logged-in student. The record is saved as FLAGGED
-// so faculty can review it. Set to false to require faculty-supervised enrollment only.
-export const ALLOW_SELF_ENROLLMENT = boolEnv('ALLOW_SELF_ENROLLMENT', true);
+// so faculty can review it. Off by default: faculty-supervised enrollment only.
+export const ALLOW_SELF_ENROLLMENT = boolEnv('ALLOW_SELF_ENROLLMENT', false);
 
 // Faculty sign-up is invite-only. Leave empty to disable public sign-up entirely.
 export const FACULTY_INVITE_CODE = process.env.FACULTY_INVITE_CODE || '';

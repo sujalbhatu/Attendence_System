@@ -10,7 +10,8 @@ import {
   Sparkles, 
   Eye, 
   RefreshCw,
-  Search
+  Search,
+  KeyRound
 } from 'lucide-react';
 
 export default function Students() {
@@ -24,6 +25,8 @@ export default function Students() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [department, setDepartment] = useState('Computer Science & Engineering');
+  // Temporary password shown once after creating a student or resetting their password
+  const [issuedPassword, setIssuedPassword] = useState(null);
 
   // Enroll Face Modal
   const [enrollingStudent, setEnrollingStudent] = useState(null);
@@ -49,7 +52,8 @@ export default function Students() {
   const handleAddStudent = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/students', { rollNumber, name, email, department });
+      const res = await api.post('/students', { rollNumber, name, email, department });
+      setIssuedPassword({ rollNumber: res.data.student.rollNumber, password: res.data.temporaryPassword });
       setShowAddModal(false);
       setRollNumber('');
       setName('');
@@ -129,6 +133,16 @@ export default function Students() {
     }
   };
 
+  const handleResetPassword = async (student) => {
+    if (!window.confirm(`Give ${student.rollNumber} a new temporary password? Their current password stops working.`)) return;
+    try {
+      const res = await api.post(`/students/${student._id}/reset-password`);
+      setIssuedPassword({ rollNumber: res.data.rollNumber, password: res.data.temporaryPassword });
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to reset password');
+    }
+  };
+
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to remove this student?')) {
       await api.delete(`/students/${id}`);
@@ -156,6 +170,21 @@ export default function Students() {
           <Plus size={18} /> Add New Student
         </button>
       </div>
+
+      {issuedPassword && (
+        <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid var(--accent-amber)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: '0.9rem' }}>
+            Temporary password for <strong className="mono">{issuedPassword.rollNumber}</strong>:{' '}
+            <strong className="mono" style={{ color: 'var(--accent-amber)' }}>{issuedPassword.password}</strong>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              Share it with the student now. It won't be shown again; use Reset password if it's lost.
+            </div>
+          </div>
+          <button onClick={() => setIssuedPassword(null)} className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}>
+            Done
+          </button>
+        </div>
+      )}
 
       {/* Search Bar */}
       <div className="card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -215,6 +244,14 @@ export default function Students() {
                         style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
                       >
                         <Camera size={14} /> {s.isEnrolled ? 'Re-enroll Face' : 'Enroll Face'}
+                      </button>
+                      <button 
+                        onClick={() => handleResetPassword(s)}
+                        className="btn btn-secondary"
+                        style={{ padding: '0.35rem 0.65rem' }}
+                        title="Reset password"
+                      >
+                        <KeyRound size={14} />
                       </button>
                       <button 
                         onClick={() => handleDelete(s._id)}

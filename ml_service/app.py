@@ -195,11 +195,12 @@ def verify():
         except Exception as e:
             return jsonify({'error': f"Invalid gallery format: {str(e)}"}), 400
 
+    # Nothing to compare against: never report a match without a reference face
     return jsonify({
-        'matched': True,
-        'embedding': probe_embedding.tolist(),
+        'matched': False,
+        'error': 'No enrolled embedding or gallery provided',
         'liveness': liveness_result
-    })
+    }), 400
 
 @app.route('/batch_verify', methods=['POST'])
 def batch_verify():
@@ -222,4 +223,6 @@ def batch_verify():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # Only the backend talks to this service, so listen on loopback unless told otherwise
+    host = os.environ.get('ML_HOST', '127.0.0.1')
+    app.run(host=host, port=port, debug=False)

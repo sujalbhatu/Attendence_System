@@ -5,9 +5,9 @@ import Session from '../models/Session.js';
 import AttendanceRecord from '../models/AttendanceRecord.js';
 import { JWT_SECRET } from '../config.js';
 
-// Students who never set a password start with their roll number (lower-case).
-// Anyone who knows a roll number knows that, so it only works once: the student
-// must set a new password before they can mark attendance.
+// Older accounts may still have their roll number (lower-case) as the password.
+// New students get a temporary password from faculty instead (Students page), because
+// anyone who knows a roll number could otherwise claim an account before its owner.
 const defaultPasswordFor = (rollNumber) => rollNumber.toLowerCase();
 
 const signStudentToken = (student) =>
@@ -34,14 +34,9 @@ export const studentLogin = async (req, res) => {
 
     const cleanRoll = String(rollNumber).trim().toUpperCase();
     const student = await Student.findOne({ rollNumber: cleanRoll }).select('+password');
-    if (!student) {
+    // No password yet means faculty hasn't issued one: there is no default to guess
+    if (!student || !student.password) {
       return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    if (!student.password) {
-      student.password = defaultPasswordFor(cleanRoll);
-      student.mustChangePassword = true;
-      await student.save();
     }
 
     const isMatch = await student.comparePassword(String(password));
