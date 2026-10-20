@@ -191,6 +191,14 @@ test('a spoof (no blink) is rejected and nothing is recorded', async () => {
   assert.equal(db.records.length, 0);
 });
 
+test('a missing liveness result fails closed', async () => {
+  mlResponse = { matched: true, similarity: 0.9 };
+  const c = await call(ctrl.claimAttendance, { body: { sessionId: session._id, scannedToken: freshToken().token }, student });
+  const r = await call(ctrl.verifyBiometrics, { body: { claimTicket: c.body.claimTicket }, files: [{ path: '/tmp/f.jpg' }], student });
+  assert.equal(r.body.code, 'SPOOF_DETECTED');
+  assert.equal(db.records.length, 0);
+});
+
 test('already marked → 409 on a second claim', async () => {
   db.records.push({ sessionId: session._id, studentId: student._id });
   const r = await call(ctrl.claimAttendance, { body: { sessionId: session._id, scannedToken: freshToken().token }, student });

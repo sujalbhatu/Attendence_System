@@ -298,10 +298,11 @@ export const verifyBiometrics = async (req, res) => {
 
     const { matched, similarity, liveness, embedding: probeEmbedding, error: mlError } = mlRes.data;
 
-    if (requireLiveness && liveness && liveness.is_live === false) {
+    // Fail closed: no liveness result from the ML service counts as a failed check
+    if (requireLiveness && liveness?.is_live !== true) {
       return res.status(400).json({
         code: 'SPOOF_DETECTED',
-        error: mlError || `Liveness verification failed: ${liveness.reason || 'No natural blink detected'}`,
+        error: mlError || `Liveness verification failed: ${liveness?.reason || 'No natural blink detected'}`,
         liveness
       });
     }
