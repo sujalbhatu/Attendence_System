@@ -1,29 +1,25 @@
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import Session from '../models/Session.js';
-import Classroom from '../models/Classroom.js';
-import AttendanceRecord from '../models/AttendanceRecord.js';
-import Course from '../models/Course.js';
-import Enrollment from '../models/Enrollment.js';
+import {
+  findSessionById,
+  findOwnedSession,
+  getSessionSecret,
+  createSession as insertSession,
+  listFacultySessions,
+  toggleRequirePin
+} from '../repositories/sessions.js';
+import { findClassroomById } from '../repositories/classrooms.js';
+import { findCourseById } from '../repositories/courses.js';
+import { concludeWithAbsentees, sessionRecordsByRoll } from '../repositories/attendance.js';
 import { TokenService } from '../services/tokenService.js';
 import { StaggerService } from '../services/staggerService.js';
 import { JWT_SECRET } from '../config.js';
 
 const PROJECTOR_TOKEN_TTL = '4h';
 
-// Only the faculty who created a session (or an admin) may read or change it.
-const ownedSessionFilter = (id, user) =>
-  user.role === 'admin' ? { _id: id } : { _id: id, facultyId: user._id };
-
-const findOwnedSession = (id, user) => {
-  if (!mongoose.isValidObjectId(id)) return null;
-  return Session.findOne(ownedSessionFilter(id, user));
-};
-
 export const createSession = async (req, res) => {
   try {
     const { courseCode, courseName, classroomId, requirePin, courseId, branch } = req.body;
-    const classroom = await Classroom.findById(classroomId);
+    const classroom = await findClassroomById(classroomId);
     if (!classroom) {
       return res.status(404).json({ error: 'Classroom not found' });
     }
@@ -32,27 +28,24 @@ export const createSession = async (req, res) => {
     let finalCourseName = courseName || '';
     const finalBranch = branch || '';
 
+    let course = null;
     if (courseId) {
-      const course = await Course.findById(courseId);
+      course = await findCourseById(courseId);
       if (course) {
         finalCourseCode = course.courseCode.toUpperCase();
         finalCourseName = course.courseName;
       }
     }
 
-    const session = await Session.create({
+    const populated = await insertSession({
       courseCode: finalCourseCode,
       courseName: finalCourseName,
-      courseId: courseId || null,
+      courseId: course?.id || null,
       branch: finalBranch,
-      facultyId: req.user._id,
-      classroomId: classroom._id,
+      facultyId: req.user.id,
+      classroomId: classroom.id,
       requirePin: requirePin === true
     });
-
-    const populated = await Session.findById(session._id)
-      .populate('classroomId')
-      .populate('facultyId', 'name email department');
 
     res.status(201).json({ session: populated });
   } catch (err) {
@@ -62,10 +55,7 @@ export const createSession = async (req, res) => {
 
 export const getSession = async (req, res) => {
   try {
-    const query = findOwnedSession(req.params.id, req.user);
-    const session = query && await query
-      .populate('classroomId')
-      .populate('facultyId', 'name email department');
+    const session = await findOwnedSession(req.params.id, req.user);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
@@ -77,10 +67,7 @@ export const getSession = async (req, res) => {
 
 export const getFacultySessions = async (req, res) => {
   try {
-    const sessions = await Session.find({ facultyId: req.user._id })
-      .populate('classroomId')
-      .sort({ createdAt: -1 })
-      .limit(20);
+    const sessions = await listFacultySessions(req.user.id, 20);
     res.json({ sessions });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -103,7 +90,7 @@ export const issueProjectorToken = async (req, res) => {
       return res.status(400).json({ error: 'Session is no longer active' });
     }
     const projectorToken = jwt.sign(
-      { sid: session._id.toString(), scope: 'projector' },
+      { sid: session.id, scope: 'projector' },
       JWT_SECRET,
       { expiresIn: PROJECTOR_TOKEN_TTL }
     );
@@ -131,7 +118,7 @@ export const streamQRFeed = async (req, res) => {
       return res.status(401).json({ error: 'Projector link is not valid for this session.' });
     }
 
-    const session = await Session.findById(req.params.id);
+    const session = await findSessionById(req.params.id);
     if (!session || session.status !== 'ACTIVE') {
       return res.status(404).json({ error: 'Active session not found' });
     }
@@ -150,21 +137,21 @@ export const streamQRFeed = async (req, res) => {
       if (closed) return;
       let nextDelay = intervalSeconds * 1000;
       try {
-        const current = await Session.findById(session._id).select('+totpSecret requirePin status');
+        const current = await getSessionSecret(session.id);
         if (!current || current.status !== 'ACTIVE') {
           res.write('event: concluded\ndata: {}\n\n');
           res.end();
           closed = true;
           return;
         }
-        const tokenData = TokenService.generateToken(current.totpSecret, current._id.toString(), intervalSeconds);
+        const tokenData = TokenService.generateToken(current.totp_secret, session.id, intervalSeconds);
         res.write(`data: ${JSON.stringify({
-          sessionId: current._id,
+          sessionId: session.id,
           token: tokenData.token,
           pin: tokenData.pin,
           timestamp: tokenData.timestamp,
           expiresInMs: tokenData.expiresInMs,
-          requirePin: !!current.requirePin
+          requirePin: !!current.require_pin
         })}\n\n`);
         // Wake up just after the next rotation boundary.
         nextDelay = tokenData.expiresInMs + 25;
@@ -190,12 +177,11 @@ export const togglePinRequirement = async (req, res) => {
     const session = await findOwnedSession(req.params.id, req.user);
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
-    session.requirePin = !session.requirePin;
-    await session.save();
+    const requirePin = await toggleRequirePin(session.id);
 
     res.json({
-      message: `Line-of-Sight PIN is now ${session.requirePin ? 'ENABLED' : 'DISABLED'}`,
-      requirePin: session.requirePin
+      message: `Line-of-Sight PIN is now ${requirePin ? 'ENABLED' : 'DISABLED'}`,
+      requirePin
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -209,59 +195,16 @@ export const concludeSession = async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    session.status = 'CONCLUDED';
-    session.concludedAt = new Date();
-    await session.save();
-    StaggerService.resetSession(session._id);
-
-    let presentCount = 0;
-    let absentCount = 0;
-    let totalCount = 0;
-
-    // Auto-absent: every enrolled student without any record (PRESENT or FLAGGED) gets ABSENT.
-    if (session.courseId) {
-      const enrollments = await Enrollment.find({
-        courseId: session.courseId,
-        branch: session.branch,
-        status: 'active'
-      }).populate('studentId', 'rollNumber name');
-
-      totalCount = enrollments.length;
-
-      const existingRecords = await AttendanceRecord.find({ sessionId: session._id }).select('studentId status');
-      const studentsWithRecord = new Set(existingRecords.map((r) => r.studentId.toString()));
-      presentCount = existingRecords.filter((r) => r.status === 'PRESENT').length;
-
-      const absentRecordsToCreate = [];
-      for (const enr of enrollments) {
-        if (!enr.studentId) continue;
-        if (!studentsWithRecord.has(enr.studentId._id.toString())) {
-          absentRecordsToCreate.push({
-            sessionId: session._id,
-            studentId: enr.studentId._id,
-            rollNumber: enr.studentId.rollNumber,
-            studentName: enr.studentId.name,
-            courseCode: session.courseCode,
-            roomCode: 'N/A',
-            status: 'ABSENT',
-            verificationMetrics: { cosineSimilarity: 0, threshold: 0.65, livenessScore: 0, livenessPassed: false, distanceMeters: 0 }
-          });
-          absentCount++;
-        }
-      }
-
-      if (absentRecordsToCreate.length > 0) {
-        // ordered:false — one duplicate (e.g. a late concurrent check-in) must not abort the rest.
-        await AttendanceRecord.insertMany(absentRecordsToCreate, { ordered: false }).catch((err) => {
-          if (err.code !== 11000 && !err.writeErrors) throw err;
-        });
-      }
-    }
+    // Auto-absent: every enrolled student without any record (PRESENT or FLAGGED) gets ABSENT,
+    // in the same transaction that concludes the session.
+    const stats = await concludeWithAbsentees(session);
+    StaggerService.resetSession(session.id);
+    const concluded = await findSessionById(session.id);
 
     res.json({
       message: 'Session concluded successfully',
-      session,
-      stats: session.courseId ? { present: presentCount, absent: absentCount, total: totalCount } : null
+      session: concluded,
+      stats
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -277,11 +220,10 @@ const csvCell = (value) => {
 
 export const exportSessionCSV = async (req, res) => {
   try {
-    const query = findOwnedSession(req.params.id, req.user);
-    const session = query && await query.populate('classroomId').populate('facultyId', 'name email');
+    const session = await findOwnedSession(req.params.id, req.user);
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
-    const records = await AttendanceRecord.find({ sessionId: session._id }).sort({ rollNumber: 1 });
+    const records = await sessionRecordsByRoll(session.id);
 
     let csv = 'Roll Number,Student Name,Course Code,Course Name,Room,Status,Biometric Confidence,Liveness Status,Marked At\n';
     records.forEach((r) => {

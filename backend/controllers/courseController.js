@@ -1,15 +1,27 @@
-import Course from '../models/Course.js';
-import Enrollment from '../models/Enrollment.js';
-import Student from '../models/Student.js';
-import FacultyAssignment from '../models/FacultyAssignment.js';
-import AttendanceRecord from '../models/AttendanceRecord.js';
-import Session from '../models/Session.js';
+import { UNIQUE_VIOLATION, isUuid } from '../db/index.js';
+import {
+  createCourse as insertCourse,
+  listCourses,
+  findCourseById,
+  countActiveEnrollments,
+  enrollRollNumbers,
+  courseEnrollmentStats,
+  listFacultyAssignments,
+  createFacultyAssignment
+} from '../repositories/courses.js';
 
 export const createCourse = async (req, res) => {
   try {
-    const course = await Course.create(req.body);
+    const { courseCode, courseName, credits, department, semester, academicYear } = req.body;
+    if (!courseCode || !courseName || !department || !semester || !academicYear) {
+      return res.status(400).json({ error: 'courseCode, courseName, department, semester and academicYear are required' });
+    }
+    const course = await insertCourse({ courseCode: String(courseCode), courseName, credits, department, semester, academicYear });
     res.status(201).json({ course });
   } catch (err) {
+    if (err.code === UNIQUE_VIOLATION) {
+      return res.status(400).json({ error: 'This course already exists for that academic year' });
+    }
     res.status(500).json({ error: err.message });
   }
 };
@@ -17,12 +29,11 @@ export const createCourse = async (req, res) => {
 export const getCourses = async (req, res) => {
   try {
     const { department, semester, academicYear } = req.query;
-    const filter = {};
-    if (department) filter.department = department;
-    if (semester) filter.semester = semester;
-    if (academicYear) filter.academicYear = academicYear;
-
-    const courses = await Course.find(filter).sort({ courseCode: 1 });
+    const courses = await listCourses({
+      department: department || undefined,
+      semester: semester ? Number(semester) : undefined,
+      academicYear: academicYear || undefined
+    });
     res.json({ courses });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -31,10 +42,10 @@ export const getCourses = async (req, res) => {
 
 export const getCourseById = async (req, res) => {
   try {
-    const course = await Course.findById(req.params.id);
+    const course = await findCourseById(req.params.id);
     if (!course) return res.status(404).json({ error: 'Course not found' });
 
-    const enrolledCount = await Enrollment.countDocuments({ courseId: course._id, status: 'active' });
+    const enrolledCount = await countActiveEnrollments(course.id);
     res.json({ course, enrolledCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -47,47 +58,22 @@ export const enrollStudents = async (req, res) => {
     let { rollNumbers, branch, academicYear, csv } = req.body;
 
     if (csv) {
-      rollNumbers = csv.split('\n').map(r => r.trim().toUpperCase()).filter(r => r);
+      rollNumbers = String(csv).split('\n').map(r => r.trim().toUpperCase()).filter(r => r);
     }
 
     if (!rollNumbers || !Array.isArray(rollNumbers)) {
       return res.status(400).json({ error: 'Provide rollNumbers array or csv string' });
     }
-
-    const course = await Course.findById(id);
-    if (!course) return res.status(404).json({ error: 'Course not found' });
-
-    let success = 0;
-    let skipped = 0;
-    const errors = [];
-
-    for (const roll of rollNumbers) {
-      const student = await Student.findOne({ rollNumber: roll });
-      if (!student) {
-        errors.push(`Student ${roll} not found`);
-        skipped++;
-        continue;
-      }
-
-      try {
-        await Enrollment.create({
-          studentId: student._id,
-          courseId: course._id,
-          branch,
-          academicYear
-        });
-        success++;
-      } catch (err) {
-        if (err.code === 11000) {
-          skipped++;
-        } else {
-          errors.push(`Error enrolling ${roll}: ${err.message}`);
-          skipped++;
-        }
-      }
+    if (!branch || !academicYear) {
+      return res.status(400).json({ error: 'branch and academicYear are required' });
     }
 
-    res.json({ success, skipped, errors });
+    const course = await findCourseById(id);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+
+    // One INSERT ... SELECT for the whole list; existing enrollments are skipped
+    const result = await enrollRollNumbers(course.id, rollNumbers, { branch, academicYear });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -95,36 +81,10 @@ export const enrollStudents = async (req, res) => {
 
 export const getCourseEnrollments = async (req, res) => {
   try {
-    const { id } = req.params;
-    const enrollments = await Enrollment.find({ courseId: id, status: 'active' })
-      .populate('studentId', 'rollNumber name email');
-
-    // Need attendance stats per student
-    const sessions = await Session.find({ courseId: id });
-    const sessionIds = sessions.map(s => s._id);
-
-    const stats = [];
-    for (const enr of enrollments) {
-      const presentCount = await AttendanceRecord.countDocuments({
-        studentId: enr.studentId._id,
-        sessionId: { $in: sessionIds },
-        status: 'PRESENT'
-      });
-      const totalSessions = sessionIds.length;
-      
-      stats.push({
-        student: enr.studentId,
-        branch: enr.branch,
-        enrolledAt: enr.enrolledAt,
-        attendance: {
-          present: presentCount,
-          total: totalSessions,
-          percentage: totalSessions > 0 ? (presentCount / totalSessions) * 100 : 0
-        }
-      });
-    }
-
-    res.json({ enrollments: stats });
+    if (!isUuid(req.params.id)) return res.json({ enrollments: [] });
+    // Attendance per student is computed in one query
+    const enrollments = await courseEnrollmentStats(req.params.id);
+    res.json({ enrollments });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -132,8 +92,7 @@ export const getCourseEnrollments = async (req, res) => {
 
 export const getMyAssignments = async (req, res) => {
   try {
-    const assignments = await FacultyAssignment.find({ facultyId: req.user._id })
-      .populate('courseId');
+    const assignments = await listFacultyAssignments(req.user.id);
     res.json({ assignments });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -144,8 +103,11 @@ export const assignFaculty = async (req, res) => {
   try {
     const { id } = req.params;
     const { facultyId, branch, academicYear } = req.body;
+    if (!isUuid(id) || !isUuid(String(facultyId)) || !branch || !academicYear) {
+      return res.status(400).json({ error: 'facultyId, branch and academicYear are required' });
+    }
 
-    const assignment = await FacultyAssignment.create({
+    const assignment = await createFacultyAssignment({
       facultyId,
       courseId: id,
       branch,
@@ -154,6 +116,9 @@ export const assignFaculty = async (req, res) => {
 
     res.status(201).json({ assignment });
   } catch (err) {
+    if (err.code === UNIQUE_VIOLATION) {
+      return res.status(400).json({ error: 'This faculty is already assigned to the course' });
+    }
     res.status(500).json({ error: err.message });
   }
 };

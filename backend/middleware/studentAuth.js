@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import Student from '../models/Student.js';
+import { findStudentById } from '../repositories/students.js';
 import { JWT_SECRET } from '../config.js';
 
 const verifyStudent = ({ allowPasswordChange }) => async (req, res, next) => {
@@ -16,8 +16,8 @@ const verifyStudent = ({ allowPasswordChange }) => async (req, res, next) => {
       return res.status(403).json({ code: 'NOT_STUDENT', error: 'Not authorized as a student' });
     }
 
-    // password and faceEmbedding are select:false, so they are not loaded here.
-    req.student = await Student.findById(decoded.studentId);
+    // The password hash and face embedding are never loaded here.
+    req.student = await findStudentById(decoded.studentId);
     if (!req.student) {
       return res.status(401).json({ code: 'LOGIN_REQUIRED', error: 'Student account not found' });
     }

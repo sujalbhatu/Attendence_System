@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { findUserById } from '../repositories/users.js';
 import { JWT_SECRET } from '../config.js';
 
 // Faculty/admin authentication. Tokens are accepted only in the Authorization
@@ -17,7 +17,7 @@ export const protect = async (req, res, next) => {
     if (!decoded.id) {
       return res.status(401).json({ error: 'Token invalid or expired' });
     }
-    req.user = await User.findById(decoded.id).select('-password');
+    req.user = await findUserById(decoded.id); // never includes the password hash
     if (!req.user) {
       return res.status(401).json({ error: 'User account not found' });
     }

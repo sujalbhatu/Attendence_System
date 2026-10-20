@@ -6,8 +6,8 @@
  *   npm run set-faculty-password -- faculty@campus.edu "a-new-long-password"
  */
 import '../config.js';
-import mongoose from 'mongoose';
-import User from '../models/User.js';
+import { closePool } from '../db/index.js';
+import { setUserPassword } from '../repositories/users.js';
 
 const [email, newPassword] = process.argv.slice(2);
 if (!email || !newPassword || newPassword.length < 12) {
@@ -15,13 +15,13 @@ if (!email || !newPassword || newPassword.length < 12) {
   process.exit(1);
 }
 
-await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/campustrack');
-const user = await User.findOne({ email: email.toLowerCase() });
-if (!user) {
-  console.error(`No faculty account with email ${email}`);
-} else {
-  user.password = newPassword; // hashed by the User pre-save hook
-  await user.save();
-  console.log(`Password updated for ${email}`);
+try {
+  if (await setUserPassword(email, newPassword)) {
+    console.log(`Password updated for ${email}`);
+  } else {
+    console.error(`No faculty account with email ${email}`);
+    process.exitCode = 1;
+  }
+} finally {
+  await closePool();
 }
-await mongoose.disconnect();

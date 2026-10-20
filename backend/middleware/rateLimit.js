@@ -37,4 +37,4 @@ export const rateLimit = ({ windowMs, max, keyFn, message = 'Too many requests. 
 
 export const byIp = (req) => req.ip;
 export const byIpAndField = (field) => (req) => `${req.ip}:${String(req.body?.[field] || '').trim().toLowerCase()}`;
-export const byStudent = (req) => `student:${req.student?._id || req.ip}`;
+export const byStudent = (req) => `student:${req.student?.id || req.ip}`;
