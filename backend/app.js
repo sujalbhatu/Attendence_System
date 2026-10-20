@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { query } from './db/index.js';
 import { getRedis } from './lib/redis.js';
+import { verifyQueue, batchMode } from './services/verifyQueue.js';
 import authRoutes from './routes/auth.js';
 import classroomRoutes from './routes/classrooms.js';
 import studentRoutes from './routes/students.js';
@@ -68,7 +69,8 @@ export function createApp() {
       service: 'CampusTrack Gateway',
       timestamp: new Date(),
       database,
-      redis
+      redis,
+      faceQueue: { batchMode, ...verifyQueue.summary() }
     });
   });
 

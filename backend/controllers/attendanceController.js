@@ -1,10 +1,9 @@
-import axios from 'axios';
-import FormData from 'form-data';
 import fs from 'fs';
 import { isUuid } from '../db/index.js';
 import { findOwnedSession } from '../repositories/sessions.js';
 import { getActiveSession } from '../services/sessionCache.js';
 import { publishSessionEvent } from '../services/liveEvents.js';
+import { verifyFace } from '../services/verifyQueue.js';
 import { getFaceEmbedding } from '../repositories/students.js';
 import {
   hasAttendanceRecord,
@@ -26,8 +25,7 @@ import {
   PIN_WINDOW_MS,
   MAX_PIN_ATTEMPTS,
   CLAIM_TTL_MS,
-  ALLOW_SELF_ENROLLMENT,
-  ML_SERVICE_URL
+  ALLOW_SELF_ENROLLMENT
 } from '../config.js';
 
 const MATCH_THRESHOLD = 0.65;
@@ -258,23 +256,16 @@ export const verifyBiometrics = async (req, res) => {
 
     const requireLiveness = session.requireLiveness !== false;
 
-    const form = new FormData();
-    for (const f of req.files) {
-      form.append('images', fs.createReadStream(f.path));
-    }
-    if (wasEnrolled) {
-      form.append('enrolled_embedding', JSON.stringify(storedEmbedding));
-    }
-    form.append('threshold', String(MATCH_THRESHOLD));
-    form.append('require_liveness', requireLiveness ? 'true' : 'false');
-
-    const mlRes = await axios.post(`${ML_SERVICE_URL}/verify`, form, {
-      headers: form.getHeaders(),
-      timeout: 15000
+    // Through the micro-batching face-check queue (services/verifyQueue.js)
+    const mlData = await verifyFace({
+      files: req.files,
+      enrolledEmbedding: wasEnrolled ? storedEmbedding : null,
+      threshold: MATCH_THRESHOLD,
+      requireLiveness
     });
     cleanupUploads();
 
-    const { matched, similarity, liveness, embedding: probeEmbedding, error: mlError } = mlRes.data;
+    const { matched, similarity, liveness, embedding: probeEmbedding, error: mlError } = mlData;
 
     // Fail closed: no liveness result from the ML service counts as a failed check
     if (requireLiveness && liveness?.is_live !== true) {
