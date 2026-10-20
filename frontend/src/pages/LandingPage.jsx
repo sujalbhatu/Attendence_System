@@ -1,124 +1,282 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import QRCode from 'qrcode';
-import { ArrowRight, ScanLine, User } from 'lucide-react';
+import { ArrowRight, ScanLine, Check, MapPin, User, ShieldCheck } from 'lucide-react';
 import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
 
 const REPO_URL = 'https://github.com/sujalbhatu/Attendence_System';
+const WINDOW_MS = 4000;
+const ENROLLED = 64;
 
-// Sample check-ins for the hero preview (made-up roll numbers).
-const SAMPLE = ['2023UGCS014', '2023UGCS031', '2023UGCS007', '2023UGCS052', '2023UGCS023', '2023UGCS046', '2023UGCS038', '2023UGCS019'];
+// Sample check-ins for the hero (made-up roll numbers and names)
+const SAMPLE = [
+  ['2023UGCS014', 'Aarav S.'], ['2023UGCS031', 'Diya P.'], ['2023UGCS007', 'Kabir M.'], ['2023UGCS052', 'Ishita R.'],
+  ['2023UGCS023', 'Vihaan K.'], ['2023UGCS046', 'Anaya G.'], ['2023UGCS038', 'Reyansh T.'], ['2023UGCS019', 'Myra J.'],
+  ['2023UGCS060', 'Arjun B.'], ['2023UGCS003', 'Saanvi D.']
+];
 
 const randomToken = () => Array.from({ length: 16 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
 
-function HeroPreview() {
+// Adds .in to .reveal elements as they scroll into view
+function useReveal() {
+  useEffect(() => {
+    const els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+      els.forEach((el) => el.classList.add('in'));
+      return undefined;
+    }
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => e.isIntersecting && (e.target.classList.add('in'), io.unobserve(e.target))),
+      { threshold: 0.15 }
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+}
+
+function HeroStage() {
   const [qr, setQr] = useState('');
   const [tick, setTick] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const startRef = useRef(Date.now());
 
-  // A new code every 4 s, the same rhythm as the real projector
   useEffect(() => {
     let cancelled = false;
     const draw = () =>
-      QRCode.toDataURL(JSON.stringify({ s: 'demo', t: randomToken(), ts: Date.now() }), { width: 220, margin: 0 })
+      QRCode.toDataURL(JSON.stringify({ s: 'cs401-l302', t: randomToken(), ts: Date.now() }), { width: 240, margin: 0 })
         .then((url) => !cancelled && setQr(url))
         .catch(() => {});
     draw();
     const id = setInterval(() => {
+      startRef.current = Date.now();
       draw();
       setTick((t) => t + 1);
-    }, 4000);
+    }, WINDOW_MS);
+    const raf = setInterval(() => setProgress(Math.min(1, (Date.now() - startRef.current) / WINDOW_MS)), 50);
     return () => {
       cancelled = true;
       clearInterval(id);
+      clearInterval(raf);
     };
   }, []);
 
-  useEffect(() => {
-    const start = Date.now();
-    const id = setInterval(() => setElapsed(((Date.now() - start) % 4000) / 4000), 60);
-    return () => clearInterval(id);
-  }, [tick]);
-
-  const count = 41 + Math.min(tick * 3, 21);
-  const rows = Array.from({ length: 5 }, (_, i) => SAMPLE[(tick * 3 + i) % SAMPLE.length]);
-  const now = new Date();
+  const count = 38 + ((tick * 3) % 27);
+  const rows = Array.from({ length: 6 }, (_, i) => SAMPLE[(tick * 3 + SAMPLE.length - i) % SAMPLE.length]);
+  const latest = rows[0];
+  const r = 46;
+  const circ = 2 * Math.PI * r;
+  const secs = Math.max(1, Math.ceil((1 - progress) * 4));
 
   return (
-    <div className="preview" aria-hidden="true">
-      <div className="preview-screen">
-        <div className="preview-bar">
-          <span><b>CS401</b> · Operating Systems · L-302</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}><span className="live-dot" /> live</span>
+    <div className="lp-stage" aria-hidden="true">
+      <div className="lp-float lp-float-a">
+        <span className="lp-float-icon"><MapPin size={15} /></span>
+        <span><b>Inside L-302</b><small>12 m from centre · ±8 m</small></span>
+      </div>
+
+      <div className="lp-screen">
+        <div className="lp-screen-bar">
+          <span><b>CS401</b> · Operating Systems · Room L-302</span>
+          <span className="live"><span className="live-dot" /> live</span>
         </div>
-        <div className="preview-grid">
-          <div className="preview-qr">
-            <div className="preview-qr-img">{qr && <img src={qr} alt="" />}</div>
-            <div className="preview-timer"><div style={{ width: `${(1 - elapsed) * 100}%` }} /></div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.62rem', color: '#6f6d66' }}>new code in {Math.ceil((1 - elapsed) * 4)}s</div>
+        <div className="lp-screen-body">
+          <div className="lp-qr-panel">
+            <div className="lp-qr-ring">
+              <svg className="ring" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r={r} stroke="#2b2a26" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r={r}
+                  stroke="#d6f53b"
+                  strokeLinecap="round"
+                  strokeDasharray={circ}
+                  strokeDashoffset={circ * progress}
+                />
+              </svg>
+              <div className="lp-qr-img">{qr && <img key={tick} src={qr} alt="" />}</div>
+            </div>
+            <div className="lp-qr-caption">new code in <b>{secs}s</b> · signed, single-use window</div>
           </div>
-          <div className="preview-list">
-            <div className="preview-count">{count}<span>of 64</span></div>
-            <div className="preview-rows">
-              {rows.map((r, i) => (
-                <div className="preview-row" key={`${tick}-${i}`}>
-                  <span>{r}</span>
-                  <span>{new Date(now.getTime() - i * 2300).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</span>
+          <div className="lp-roster">
+            <div className="lp-roster-head">
+              <small>Checked in</small>
+              <div className="lp-count">{count}<span>/ {ENROLLED}</span></div>
+              <div className="lp-count-bar"><div style={{ width: `${(count / ENROLLED) * 100}%` }} /></div>
+            </div>
+            <div className="lp-rows">
+              {rows.map(([roll], i) => (
+                <div className="lp-row" key={`${tick}-${i}`}>
+                  <span><span className="tick">✓</span>{roll}</span>
+                  <i>{i === 0 ? 'now' : `${i * 2 + 1}s`}</i>
                 </div>
               ))}
             </div>
           </div>
         </div>
       </div>
-      <div className="preview-phone">
-        <div className="preview-phone-inner">
-          <div className="preview-phone-face"><User size={26} /></div>
-          <div className="preview-phone-title">You’re marked present</div>
-          <div className="preview-phone-sub">face match 93.4%</div>
-          <span className="tag tag-present">CS401 · 10:02</span>
+
+      <div className="lp-float lp-float-b">
+        <span className="lp-float-icon"><ShieldCheck size={15} /></span>
+        <span><b>Blink detected</b><small>face match 93.4% · liveness ok</small></span>
+      </div>
+
+      <div className="lp-phone">
+        <div className="lp-phone-screen">
+          <div className="lp-phone-notch" />
+          <div className="lp-phone-face">
+            <User size={30} />
+            <span className="lp-phone-check"><Check size={14} strokeWidth={3} /></span>
+          </div>
+          <b>You’re present</b>
+          <small>{latest[1]} · {latest[0]}</small>
+          <span className="chip">CS401 · verified</span>
         </div>
       </div>
     </div>
   );
 }
 
-function ArchDiagram() {
-  const box = (x, y, w, h, title, sub, strong) => (
+/* --- Small custom illustrations (stroke = currentColor, accent = lime) --- */
+
+const ArtProjector = () => (
+  <svg viewBox="0 0 240 150" fill="none">
+    <rect x="20" y="10" width="200" height="118" rx="10" stroke="currentColor" strokeWidth="2.5" />
+    <rect x="86" y="30" width="68" height="68" rx="6" fill="#fff" stroke="currentColor" strokeWidth="2" />
+    {[[94, 38], [134, 38], [94, 78]].map(([x, y]) => (
+      <rect key={`${x}${y}`} x={x} y={y} width="12" height="12" rx="2" fill="currentColor" />
+    ))}
+    {[[114, 40], [120, 52], [110, 62], [126, 66], [138, 58], [118, 80], [132, 84], [142, 76], [112, 90]].map(([x, y]) => (
+      <rect key={`${x}-${y}`} x={x} y={y} width="6" height="6" fill="currentColor" />
+    ))}
+    <circle cx="120" cy="64" r="44" stroke="#d6f53b" strokeWidth="4" strokeDasharray="200 300" strokeLinecap="round" transform="rotate(-90 120 64)" />
+    <path d="M100 128v12M140 128v12M86 142h68" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+  </svg>
+);
+
+const ArtPhone = () => (
+  <svg viewBox="0 0 240 150" fill="none">
+    <rect x="88" y="8" width="64" height="134" rx="12" stroke="currentColor" strokeWidth="2.5" />
+    <path d="M110 16h20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    <path d="M100 48v-10h10M140 38h-10M140 38v10M100 88v10h10M140 98h-10M140 98v-10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    <path d="M98 68h44" stroke="#d6f53b" strokeWidth="4" strokeLinecap="round" />
+    <rect x="102" y="112" width="36" height="16" rx="4" fill="currentColor" />
+    <text x="120" y="124" textAnchor="middle" fontSize="11" fontFamily="IBM Plex Mono, monospace" fill="#d6f53b">7</text>
+    <circle cx="46" cy="58" r="22" stroke="currentColor" strokeWidth="2" strokeDasharray="4 5" />
+    <path d="M46 48c-5 0-8 4-8 8 0 6 8 13 8 13s8-7 8-13c0-4-3-8-8-8z" stroke="currentColor" strokeWidth="2" />
+    <path d="M68 60c8 0 12 2 18 6" stroke="currentColor" strokeWidth="2" strokeDasharray="3 4" />
+  </svg>
+);
+
+const ArtFace = () => (
+  <svg viewBox="0 0 240 150" fill="none">
+    <circle cx="120" cy="72" r="54" stroke="currentColor" strokeWidth="2.5" />
+    <circle cx="120" cy="72" r="64" stroke="#d6f53b" strokeWidth="4" strokeDasharray="120 40" strokeLinecap="round" />
+    <path d="M98 66c4 4 10 4 14 0M128 66c4 4 10 4 14 0" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    <path d="M106 92c8 6 20 6 28 0" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    <path d="M30 40h22M30 72h30M30 104h22M188 40h22M180 72h30M188 104h22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.35" />
+    <circle cx="164" cy="114" r="14" fill="#2e7a4d" />
+    <path d="M157 114l5 5 9-10" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconClockCode = () => (
+  <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+    <rect x="2.5" y="2.5" width="8" height="8" rx="1.5" />
+    <rect x="2.5" y="15.5" width="8" height="8" rx="1.5" />
+    <rect x="15.5" y="2.5" width="8" height="8" rx="1.5" />
+    <circle cx="19.5" cy="19.5" r="5" />
+    <path d="M19.5 17v2.7l1.6 1.2" />
+  </svg>
+);
+const IconFence = () => (
+  <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+    <circle cx="13" cy="13" r="10.5" strokeDasharray="2.5 3" />
+    <path d="M13 7.5c-2.4 0-4 1.8-4 4 0 3 4 6.5 4 6.5s4-3.5 4-6.5c0-2.2-1.6-4-4-4z" />
+    <circle cx="13" cy="11.5" r="1.3" fill="currentColor" />
+  </svg>
+);
+const IconPin = () => (
+  <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2.5" y="4" width="21" height="14" rx="2" />
+    <path d="M9 22h8M13 18v4" />
+    <path d="M11 8.5h4l-2.6 6" />
+  </svg>
+);
+const IconBlink = () => (
+  <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+    <path d="M2.5 13c3-5 6.5-7 10.5-7s7.5 2 10.5 7" />
+    <path d="M2.5 13c3 4 6.5 5.5 10.5 5.5s7.5-1.5 10.5-5.5" strokeDasharray="2.5 3" />
+    <path d="M13 3v-1.5M6 5l-1-1.2M20 5l1-1.2" />
+    <circle cx="13" cy="12.5" r="2.4" fill="currentColor" />
+  </svg>
+);
+
+function Schema() {
+  const table = (x, y, w, name, cols, hi) => (
     <g>
-      <rect x={x} y={y} width={w} height={h} rx="8" fill={strong ? 'var(--ink)' : 'var(--surface)'} stroke="var(--line-strong)" />
-      <text x={x + 14} y={y + 24} fontSize="13" fontWeight="600" fill={strong ? 'var(--ink-inverse)' : 'var(--ink)'} fontFamily="var(--font-sans)">{title}</text>
-      <text x={x + 14} y={y + 42} fontSize="11" fill={strong ? 'var(--ink-inverse)' : 'var(--ink-3)'} opacity={strong ? 0.7 : 1} fontFamily="var(--font-mono)">{sub}</text>
+      <rect x={x} y={y} width={w} height={28 + cols.length * 17} rx="8" fill="#1f1f1c" stroke={hi ? '#d6f53b' : '#3a3934'} strokeWidth={hi ? 1.5 : 1} />
+      <text x={x + 10} y={y + 15} fontSize="11" fontWeight="600" fill="#f4f3ee" fontFamily="IBM Plex Mono, monospace">{name}</text>
+      <line x1={x} y1={y + 22} x2={x + w} y2={y + 22} stroke="#3a3934" />
+      {cols.map((c, i) => (
+        <text key={c} x={x + 10} y={y + 36 + i * 17} fontSize="9.5" fill={c.startsWith('UNIQUE') ? '#d6f53b' : '#a9a79f'} fontFamily="IBM Plex Mono, monospace">{c}</text>
+      ))}
     </g>
   );
-  const arrow = (x1, y1, x2, y2, label, dx = 8) => (
-    <g>
-      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--ink-3)" strokeWidth="1.25" markerEnd="url(#arrow)" />
-      {label && <text x={(x1 + x2) / 2 + dx} y={(y1 + y2) / 2 - 4} fontSize="10" fill="var(--ink-3)" fontFamily="var(--font-mono)">{label}</text>}
-    </g>
-  );
+  const link = (d) => <path d={d} stroke="#5a5952" strokeWidth="1.2" fill="none" strokeDasharray="3 3" />;
   return (
-    <svg viewBox="0 0 460 360" role="img" aria-label="System diagram: phones and projector talk to an Express API, which uses PostgreSQL and a face-recognition service">
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0 0L10 5L0 10z" fill="var(--ink-3)" />
-        </marker>
-      </defs>
-      {box(20, 20, 190, 56, 'Projector', 'SSE: code every 4 s')}
-      {box(250, 20, 190, 56, 'Student phones', 'scan · PIN · 12 frames')}
-      {arrow(115, 76, 195, 132, 'HTTPS', -44)}
-      {arrow(345, 76, 265, 132)}
-      {box(120, 134, 220, 62, 'Express API · Node 22', 'HMAC tokens · rate limits', true)}
-      {arrow(180, 196, 115, 262, 'pg pool', -58)}
-      {arrow(280, 196, 345, 262, 'multipart')}
-      {box(20, 264, 190, 62, 'PostgreSQL · Neon', 'transactions · FKs')}
-      {box(250, 264, 190, 62, 'Face service · Flask', 'FaceNet 512-d · blink')}
+    <svg viewBox="0 0 480 330" role="img" aria-label="Database schema: students and courses joined by enrollments; sessions belong to courses; attendance records link sessions and students with a unique constraint">
+      {link('M160 62 H178')}
+      {link('M338 62 H328')}
+      {link('M400 93 V170')}
+      {link('M300 225 H280')}
+      {link('M80 93 V250 H110')}
+      {table(20, 20, 140, 'students', ['id uuid', 'roll_number', 'face_embedding real[]'])}
+      {table(178, 20, 150, 'enrollments', ['student_id → students', 'course_id → courses', 'UNIQUE (student, course)'])}
+      {table(338, 20, 130, 'courses', ['id uuid', 'course_code', 'academic_year'])}
+      {table(300, 170, 168, 'sessions', ['course_id → courses', 'present_count', 'require_pin'])}
+      {table(110, 200, 170, 'attendance_records', ['session_id → sessions', 'student_id → students', 'status · cosine_similarity', 'UNIQUE (session, student)'], true)}
     </svg>
+  );
+}
+
+function Race() {
+  const ref = useRef(null);
+  const [go, setGo] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !('IntersectionObserver' in window)) {
+      setGo(true);
+      return undefined;
+    }
+    const io = new IntersectionObserver(([e]) => e.isIntersecting && (setGo(true), io.disconnect()), { threshold: 0.4 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className={`lp-race ${go ? 'go' : ''}`}>
+      <div>
+        <div className="lp-lane-top">
+          <div className="lp-lane-name">Calling names<small>64 students × ~6 s each, one at a time</small></div>
+          <div className="lp-lane-time">6 min 24 s</div>
+        </div>
+        <div className="lp-track"><div className="lp-fill slow" /></div>
+      </div>
+      <div>
+        <div className="lp-lane-top">
+          <div className="lp-lane-name">RollOne<small>everyone scans at once from their seat</small></div>
+          <div className="lp-lane-time lime">~15 s</div>
+        </div>
+        <div className="lp-track"><div className="lp-fill fast" /></div>
+      </div>
+    </div>
   );
 }
 
 export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
+  useReveal();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -127,251 +285,239 @@ export default function LandingPage() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  const stack = ['React 19', 'Vite', 'Node 22 · Express', 'PostgreSQL 18 on Neon', 'Server-sent events', 'HMAC-SHA256 tokens', 'Flask', 'PyTorch FaceNet', 'OpenCV liveness', 'Haversine geofence', 'Nginx', 'Oracle Cloud'];
+
   return (
-    <div className="landing">
-      <header className={`l-nav ${scrolled ? 'scrolled' : ''}`}>
+    <div className="lp">
+      <header className={`lp-nav ${scrolled ? 'scrolled' : ''}`}>
         <div className="wrap">
           <Logo />
-          <nav className="l-links" aria-label="Sections">
+          <nav className="lp-links" aria-label="Sections">
             <a href="#how">How it works</a>
             <a href="#security">Security</a>
             <a href="#engineering">Engineering</a>
             <Link to="/my-attendance">Student portal</Link>
           </nav>
-          <div className="l-nav-actions">
-            <ThemeToggle />
+          <div className="lp-nav-actions">
+            <ThemeToggle className="btn btn-ghost btn-icon" />
             <Link to="/scan" className="btn btn-ghost hide-xs">Check in</Link>
-            <Link to="/login" className="btn btn-primary">Faculty sign in</Link>
+            <Link to="/login" className="btn lp-btn-lime">Faculty sign in</Link>
           </div>
         </div>
       </header>
 
-      <main>
-        <section className="wrap hero">
+      <section className="lp-hero">
+        <div className="wrap lp-hero-grid">
           <div>
-            <div className="eyebrow">Attendance for lecture halls</div>
-            <h1 style={{ marginTop: '1rem' }}>
-              The whole class checks in <em>at once.</em>
+            <span className="lp-live-pill"><span className="live-dot" /> Live preview · <b>CS401</b> in room L-302</span>
+            <h1 className="lp-display">
+              Roll call,<br />
+              done in<br />
+              <span className="lp-mark">15&nbsp;seconds.</span>
             </h1>
-            <p className="hero-lede">
-              Put one rotating code on the projector. Every student scans it from their seat, their phone confirms
-              they’re in the room and that it’s really them, and the register fills itself in while you start teaching.
-              Sixty students or three hundred, it takes the same few seconds.
+            <p className="lp-hero-lede">
+              One rotating code on the projector. Every student scans it from their seat, their phone proves
+              they’re <strong>in the room</strong> and that it’s <strong>really them</strong>, and the register fills
+              itself while you start teaching.
             </p>
-            <div className="hero-cta">
-              <Link to="/login" className="btn btn-primary btn-lg">Start a lecture <ArrowRight size={16} /></Link>
-              <Link to="/scan" className="btn btn-secondary btn-lg"><ScanLine size={16} /> I’m a student</Link>
+            <div className="lp-cta">
+              <Link to="/login" className="btn btn-lg lp-btn-lime">Start a lecture <ArrowRight size={17} /></Link>
+              <Link to="/scan" className="btn btn-lg lp-btn-ghost"><ScanLine size={17} /> I’m a student</Link>
             </div>
-            <div className="hero-note">
-              No app to install. Works in the phone’s browser over HTTPS.
+            <div className="lp-proof">
+              <span><Check size={15} /> No app to install</span>
+              <span><Check size={15} /> Any phone browser</span>
+              <span><Check size={15} /> Proxy-proof by design</span>
             </div>
           </div>
-          <HeroPreview />
-        </section>
+          <HeroStage />
+        </div>
+        <div className="lp-marquee" aria-hidden="true">
+          <div className="lp-marquee-track">
+            {[...stack, ...stack].map((s, i) => <span key={i}>{s}</span>)}
+          </div>
+        </div>
+      </section>
 
+      <section className="lp-section">
         <div className="wrap">
-          <div className="facts">
-            <div className="fact">
-              <div className="fact-num">4<small>s</small></div>
-              <div className="fact-text">How long each code stays valid. A forwarded screenshot is already stale.</div>
+          <div className="lp-stats reveal">
+            <div className="lp-stat">
+              <div className="lp-stat-num">4<small>s</small></div>
+              <div className="lp-stat-label">Code lifetime</div>
+              <div className="lp-stat-text">A screenshot forwarded to the hostel is already dead.</div>
             </div>
-            <div className="fact">
-              <div className="fact-num">35<small>m</small></div>
-              <div className="fact-text">Default geofence around the room. Hostel check-ins are rejected.</div>
+            <div className="lp-stat">
+              <div className="lp-stat-num">25×</div>
+              <div className="lp-stat-label">Faster than a roll call</div>
+              <div className="lp-stat-text">15 seconds instead of six minutes for a 64-student section.</div>
             </div>
-            <div className="fact">
-              <div className="fact-num">12</div>
-              <div className="fact-text">Frames per face check, enough to catch a natural blink and reject a photo.</div>
+            <div className="lp-stat">
+              <div className="lp-stat-num">512</div>
+              <div className="lp-stat-label">Numbers per face</div>
+              <div className="lp-stat-text">FaceNet embedding, matched with a blink so photos fail.</div>
             </div>
-            <div className="fact">
-              <div className="fact-num">1</div>
-              <div className="fact-text">Database transaction per check-in. No half-written records, no duplicates.</div>
+            <div className="lp-stat">
+              <div className="lp-stat-num">0</div>
+              <div className="lp-stat-label">Duplicate records</div>
+              <div className="lp-stat-text">Guaranteed by a database constraint, not by hoping.</div>
             </div>
           </div>
         </div>
+      </section>
 
-        <section id="how" className="section">
-          <div className="wrap">
-            <div className="section-head">
-              <div>
-                <div className="eyebrow">How it works</div>
-                <h2>Three steps, done in parallel by everyone in the room.</h2>
-              </div>
-              <p>
-                A roll call is sequential: the time it takes grows with every name. RollOne hands the checking to the
-                students’ own phones, so they all do it at the same moment and the lecture starts on time.
-              </p>
+      <section id="how" className="lp-section" style={{ paddingTop: 0 }}>
+        <div className="wrap">
+          <div className="lp-head reveal">
+            <div>
+              <span className="lp-kicker">How it works</span>
+              <h2 className="lp-display">Three steps. Everyone at once.</h2>
             </div>
-            <div className="steps-3">
-              <div className="step-card">
-                <div className="step-num">01</div>
+            <p>A roll call is sequential: every name adds time. RollOne hands the check to each student’s own phone, so the whole class does it in parallel.</p>
+          </div>
+          <div className="lp-steps">
+            <article className="lp-step reveal">
+              <div className="lp-step-art"><span className="lp-step-n">1</span><ArtProjector /></div>
+              <div className="lp-step-body">
                 <h3>The projector shows a live code</h3>
-                <p>The faculty starts a lecture and the classroom screen shows a QR code that changes every four seconds.</p>
-                <div className="step-detail">HMAC-signed · pushed over server-sent events</div>
+                <p>Start a lecture and the classroom screen shows a QR code that redraws every four seconds.</p>
+                <div className="lp-step-tags"><span>HMAC-signed</span><span>server-sent events</span></div>
               </div>
-              <div className="step-card">
-                <div className="step-num">02</div>
+            </article>
+            <article className="lp-step reveal">
+              <div className="lp-step-art"><span className="lp-step-n">2</span><ArtPhone /></div>
+              <div className="lp-step-body">
                 <h3>Students scan from their seats</h3>
-                <p>The scan reserves a place only if the code is current and the phone is inside the room’s geofence. Strict lectures also ask for the digit on the screen.</p>
-                <div className="step-detail">token window · GPS radius · screen PIN</div>
+                <p>The scan holds a place only if the code is current and the phone is inside the room. Strict lectures add the digit on screen.</p>
+                <div className="lp-step-tags"><span>token window</span><span>GPS radius</span><span>screen PIN</span></div>
               </div>
-              <div className="step-card">
-                <div className="step-num">03</div>
+            </article>
+            <article className="lp-step reveal">
+              <div className="lp-step-art"><span className="lp-step-n">3</span><ArtFace /></div>
+              <div className="lp-step-body">
                 <h3>A one-second face check</h3>
-                <p>The front camera records a short burst. The face is matched against the one enrolled by faculty, and a blink proves it’s a person, not a photo.</p>
-                <div className="step-detail">FaceNet embeddings · liveness · cosine match</div>
+                <p>Twelve frames from the front camera. The face must match the one faculty enrolled, and it has to blink.</p>
+                <div className="lp-step-tags"><span>FaceNet</span><span>liveness</span><span>cosine match</span></div>
               </div>
-            </div>
+            </article>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section className="section section-alt">
-          <div className="wrap">
-            <div className="section-head">
-              <div>
-                <div className="eyebrow">Compared with a roll call</div>
-                <h2>Same register. Less of the lecture spent on it.</h2>
-              </div>
-              <p>
-                Figures for a 64-student section, calling each name takes about five seconds. RollOne’s time doesn’t
-                depend on the class size because nobody waits for anyone else.
-              </p>
+      <section className="lp-section lp-dark">
+        <div className="wrap">
+          <div className="lp-head reveal">
+            <div>
+              <span className="lp-kicker">The difference</span>
+              <h2 className="lp-display">Six minutes, or fifteen seconds.</h2>
             </div>
-            <div className="table-scroll">
-              <table className="compare">
-                <thead>
-                  <tr>
-                    <th />
-                    <th>Calling names</th>
-                    <th>RollOne</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><th>Time per lecture</th><td>5–6 minutes</td><td>About 15 seconds</td></tr>
-                  <tr><th>Grows with class size</th><td>Yes, linearly</td><td>No</td></tr>
-                  <tr><th>Answering for a friend</th><td>Easy</td><td>Needs their phone, their face and the room</td></tr>
-                  <tr><th>Absentees</th><td>Written up by hand</td><td>Marked automatically when you conclude</td></tr>
-                  <tr><th>Getting it into a spreadsheet</th><td>Typed in later</td><td>CSV download, one click</td></tr>
-                  <tr><th>Student can check their standing</th><td>Ask the faculty</td><td>Live, course by course, against 75%</td></tr>
-                </tbody>
-              </table>
-            </div>
+            <p>Same register, same section of 64. One way spends the start of every lecture reading names aloud. The other is over before you’ve opened your slides.</p>
           </div>
-        </section>
-
-        <section id="security" className="section">
-          <div className="wrap">
-            <div className="section-head">
-              <div>
-                <div className="eyebrow">Security</div>
-                <h2>Four checks, each closing a different loophole.</h2>
-              </div>
-              <p>
-                Any one of these can be beaten on its own. Together they require the student to be in the room,
-                looking at the screen, at that moment, with their own face.
-              </p>
-            </div>
-            <div className="layers">
-              <div className="layer">
-                <div className="layer-n">01</div>
-                <div>
-                  <h3>A code that expires in seconds</h3>
-                  <p>Each code is an HMAC of the session and the current 4-second window. The server accepts the current window plus a short grace for network delay, and nothing older.</p>
-                  <div className="defeats">Stops: <b>a photo of the QR sent to someone outside</b></div>
-                </div>
-              </div>
-              <div className="layer">
-                <div className="layer-n">02</div>
-                <div>
-                  <h3>Inside the room’s geofence</h3>
-                  <p>The phone’s location is compared with the room’s centre using the haversine distance, allowing for the accuracy the phone reports.</p>
-                  <div className="defeats">Stops: <b>scanning a forwarded code from the hostel</b></div>
-                </div>
-              </div>
-              <div className="layer">
-                <div className="layer-n">03</div>
-                <div>
-                  <h3>A digit you can only see in person</h3>
-                  <p>Strict lectures show a single digit next to the code. Students tap it on their phone; two wrong guesses and the claim is void. Attempts are counted in the database, so parallel guesses don’t help.</p>
-                  <div className="defeats">Stops: <b>a friend in the corridor relaying the code</b></div>
-                </div>
-              </div>
-              <div className="layer">
-                <div className="layer-n">04</div>
-                <div>
-                  <h3>Their face, and a blink</h3>
-                  <p>Twelve frames go to the face service. FaceNet produces a 512-number embedding compared with the enrolled one, and eye movement across the frames must show a blink.</p>
-                  <div className="defeats">Stops: <b>holding up someone else’s photo</b></div>
-                </div>
-              </div>
-            </div>
+          <Race />
+          <div className="lp-race-notes">
+            <div className="lp-note reveal"><b>Absentees mark themselves</b><p>Conclude the lecture and everyone enrolled who didn’t check in is recorded absent in one statement.</p></div>
+            <div className="lp-note reveal"><b>One-click CSV</b><p>The register downloads straight into the department spreadsheet. Nothing to type up later.</p></div>
+            <div className="lp-note reveal"><b>Students see their 75%</b><p>Each student knows exactly how many lectures they can miss, course by course.</p></div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section id="engineering" className="section section-alt">
-          <div className="wrap">
-            <div className="section-head">
-              <div>
-                <div className="eyebrow">Engineering</div>
-                <h2>Built on PostgreSQL, because a register is relational.</h2>
-              </div>
-              <p>
-                Students, courses, enrollments, lectures and check-ins all point at each other. RollOne moved from MongoDB to
-                PostgreSQL on Neon so the database enforces those links and every check-in is a single atomic transaction.
-              </p>
+      <section id="security" className="lp-section">
+        <div className="wrap">
+          <div className="lp-head reveal">
+            <div>
+              <span className="lp-kicker">Security</span>
+              <h2 className="lp-display">Four locks. No proxies.</h2>
             </div>
-            <div className="arch">
-              <div className="panel arch-diagram">
-                <ArchDiagram />
-              </div>
-              <div>
-                <div className="arch-points">
-                  <div className="arch-point">
-                    <h3>One transaction per check-in</h3>
-                    <p>Recording attendance, bumping the lecture’s counter, updating the face template and deleting the claim either all happen or none do.</p>
-                  </div>
-                  <div className="arch-point">
-                    <h3>Duplicates are impossible, not just unlikely</h3>
-                    <p>A <code>UNIQUE (session_id, student_id)</code> constraint plus <code>ON CONFLICT DO NOTHING</code> means two simultaneous verifications still produce exactly one row.</p>
-                  </div>
-                  <div className="arch-point">
-                    <h3>Absentees in one statement</h3>
-                    <p>Concluding a lecture inserts every missing student as absent with a single <code>INSERT … SELECT</code>, instead of a loop over the class.</p>
-                  </div>
-                </div>
-                <pre className="code">
-<span className="c">-- repositories/attendance.js · conclude a lecture</span>{'\n'}
-<span className="k">INSERT INTO</span> attendance_records (session_id, student_id, status, …){'\n'}
+            <p>Each check closes a different loophole. Together they need the student in the room, looking at the screen, right now, with their own face.</p>
+          </div>
+          <div className="lp-checks">
+            <article className="lp-check reveal">
+              <div className="lp-check-icon"><IconClockCode /></div>
+              <div className="lp-check-n">01 · token</div>
+              <h3>A code that dies in four seconds</h3>
+              <p>An HMAC of the session and the current window. The server allows a short grace for network delay, and nothing older.</p>
+              <div className="lp-stops"><b>Stops</b>a photo of the QR sent outside</div>
+            </article>
+            <article className="lp-check reveal">
+              <div className="lp-check-icon"><IconFence /></div>
+              <div className="lp-check-n">02 · location</div>
+              <h3>Inside the room’s geofence</h3>
+              <p>Haversine distance from the room’s centre, allowing for the accuracy the phone itself reports.</p>
+              <div className="lp-stops"><b>Stops</b>scanning a forwarded code from the hostel</div>
+            </article>
+            <article className="lp-check reveal">
+              <div className="lp-check-icon"><IconPin /></div>
+              <div className="lp-check-n">03 · line of sight</div>
+              <h3>A digit you only see in person</h3>
+              <p>Tap the number on the projector. Two wrong guesses void the claim, counted atomically in the database.</p>
+              <div className="lp-stops"><b>Stops</b>a friend in the corridor relaying the code</div>
+            </article>
+            <article className="lp-check reveal">
+              <div className="lp-check-icon"><IconBlink /></div>
+              <div className="lp-check-n">04 · biometrics</div>
+              <h3>Their face, and a blink</h3>
+              <p>A 512-number FaceNet embedding compared with the enrolled one, plus eye movement across twelve frames.</p>
+              <div className="lp-stops"><b>Stops</b>holding up someone else’s photo</div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="engineering" className="lp-section lp-dark">
+        <div className="wrap">
+          <div className="lp-head reveal">
+            <div>
+              <span className="lp-kicker">Engineering</span>
+              <h2 className="lp-display">A register is relational. So is the database.</h2>
+            </div>
+            <p>RollOne moved from MongoDB to PostgreSQL on Neon. Foreign keys hold students, courses and lectures together, and every check-in commits as one transaction.</p>
+          </div>
+          <div className="lp-eng">
+            <div className="lp-panel lp-schema reveal">
+              <div className="lp-panel-title"><span>schema · db/migrations/001_initial.sql</span><span className="lp-dots"><span /><span /><span /></span></div>
+              <Schema />
+            </div>
+            <div className="lp-panel reveal">
+              <div className="lp-panel-title"><span>repositories/attendance.js · conclude a lecture</span><span className="lp-dots"><span /><span /><span /></span></div>
+              <pre className="lp-code">
+<span className="c">-- everyone enrolled who didn’t check in, in one statement</span>{'\n'}
+<span className="k">INSERT INTO</span> attendance_records{'\n'}
+{'  '}(session_id, student_id, status, …){'\n'}
 <span className="k">SELECT</span> $1, s.id, <span className="s">'ABSENT'</span>, …{'\n'}
-<span className="k">FROM</span> enrollments e <span className="k">JOIN</span> students s <span className="k">ON</span> s.id = e.student_id{'\n'}
-<span className="k">WHERE</span> e.course_id = $3 <span className="k">AND</span> e.branch = $4 <span className="k">AND</span> e.status = <span className="s">'active'</span>{'\n'}
-<span className="k">ON CONFLICT</span> (session_id, student_id) <span className="k">DO NOTHING</span>;
-                </pre>
-                <div className="stack">
-                  <span>React 19 · Vite</span>
-                  <span>Node 22 · Express</span>
-                  <span>PostgreSQL 18 on Neon</span>
-                  <span>Flask · PyTorch FaceNet</span>
-                  <span>OpenCV liveness</span>
-                  <span>Nginx · Oracle Cloud</span>
-                </div>
+<span className="k">FROM</span> enrollments e{'\n'}
+<span className="k">JOIN</span> students s <span className="k">ON</span> s.id = e.student_id{'\n'}
+<span className="k">WHERE</span> e.course_id = $3{'\n'}
+{'  '}<span className="k">AND</span> e.branch = $4{'\n'}
+{'  '}<span className="k">AND</span> e.status = <span className="s">'active'</span>{'\n'}
+<span className="k">ON CONFLICT</span> (session_id, student_id){'\n'}
+<span className="k">DO NOTHING</span>;
+              </pre>
+              <div className="lp-stack">
+                <span>Node 22</span><span>pg pool</span><span>PostgreSQL 18</span><span>Neon branching</span><span>66 tests</span>
               </div>
             </div>
           </div>
-        </section>
-
-        <section className="section">
-          <div className="wrap closing">
-            <h2>Give the first five minutes back to the lecture.</h2>
-            <div className="hero-cta">
-              <Link to="/login" className="btn btn-primary btn-lg">Faculty sign in <ArrowRight size={16} /></Link>
-              <Link to="/my-attendance" className="btn btn-secondary btn-lg">Check my attendance</Link>
-            </div>
+          <div className="lp-eng-points">
+            <div className="reveal"><b>One transaction per check-in</b><p>Record, counter, face template and claim cleanup commit together or not at all.</p></div>
+            <div className="reveal"><b>Duplicates can’t exist</b><p><code>UNIQUE (session_id, student_id)</code> with <code>ON CONFLICT</code>: two parallel verifications, one row.</p></div>
+            <div className="reveal"><b>No N+1 queries</b><p>Portal and course stats are single <code>GROUP BY</code> queries with <code>count(*) FILTER</code>.</p></div>
           </div>
-        </section>
-      </main>
+        </div>
+      </section>
 
-      <footer className="l-foot">
+      <section className="lp-cta-band">
+        <div className="wrap">
+          <h2 className="lp-display">Give the first five minutes back to the lecture.</h2>
+          <p>Faculty start a lecture in two clicks. Students check in without installing anything.</p>
+          <div className="lp-cta">
+            <Link to="/login" className="btn btn-lg lp-btn-ink">Faculty sign in <ArrowRight size={17} /></Link>
+            <Link to="/my-attendance" className="btn btn-lg lp-btn-outline-ink">Check my attendance</Link>
+          </div>
+        </div>
+      </section>
+
+      <footer className="lp-foot">
         <div className="wrap">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             <Logo />
