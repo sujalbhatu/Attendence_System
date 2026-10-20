@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#131311" media="(prefers-color-scheme: dark)" />
+    <!-- Light by default for everyone; dark only when the visitor picks it with the toggle -->
+    <meta name="theme-color" content="#f6f5f1" />
     <meta name="description" content="RollOne takes lecture attendance in seconds: one rotating code on the projector, a geofenced scan and a face check on every student's phone." />
     <script>
       (function () {
         var saved = 'light';
         try { saved = localStorage.getItem('campustrack-theme') || 'light'; } catch (e) {}
-        document.documentElement.setAttribute('data-theme', saved);
+        document.documentElement.setAttribute('data-theme', saved === 'dark' ? 'dark' : 'light');
       })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
