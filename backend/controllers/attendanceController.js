@@ -2,7 +2,8 @@ import axios from 'axios';
 import FormData from 'form-data';
 import fs from 'fs';
 import { isUuid } from '../db/index.js';
-import { findSessionById, findOwnedSession, getSessionSecret } from '../repositories/sessions.js';
+import { findOwnedSession } from '../repositories/sessions.js';
+import { getActiveSession } from '../services/sessionCache.js';
 import { getFaceEmbedding } from '../repositories/students.js';
 import {
   hasAttendanceRecord,
@@ -45,16 +46,12 @@ const acceptedResponse = (claim, student, classroom) => ({
 });
 
 // Moves a claim into the biometric phase and gives it a staggered upload slot.
-const promoteToBiometrics = (claim, sessionId) =>
-  promoteClaim(claim.id, { assignedDelayMs: StaggerService.assignUploadDelay(sessionId), ttlMs: CLAIM_TTL_MS });
+const promoteToBiometrics = async (claim, sessionId) =>
+  promoteClaim(claim.id, { assignedDelayMs: await StaggerService.assignUploadDelay(sessionId), ttlMs: CLAIM_TTL_MS });
 
-// The session with its classroom, plus the secret that only token checks may read
-const loadActiveSession = async (sessionId) => {
-  const secret = await getSessionSecret(sessionId);
-  if (!secret || secret.status !== 'ACTIVE') return null;
-  const session = await findSessionById(sessionId);
-  return session && { session, totpSecret: secret.totp_secret };
-};
+// The session with its classroom, plus the secret that only token checks may read.
+// Cached in Redis for a few seconds when enabled (see services/sessionCache.js).
+const loadActiveSession = (sessionId) => getActiveSession(sessionId);
 
 /**
  * Phase 1: presence claim.
@@ -130,7 +127,7 @@ export const claimAttendance = async (req, res) => {
       tokenStep: tokenCheck.step,
       status: needsPin ? 'AWAITING_PIN' : 'AWAITING_BIOMETRICS',
       pinWindowMs: needsPin ? PIN_WINDOW_MS : null,
-      assignedDelayMs: needsPin ? 0 : StaggerService.assignUploadDelay(session.id),
+      assignedDelayMs: needsPin ? 0 : await StaggerService.assignUploadDelay(session.id),
       ttlMs: CLAIM_TTL_MS
     });
 
@@ -236,7 +233,7 @@ export const verifyBiometrics = async (req, res) => {
       });
     }
 
-    const session = await findSessionById(claim.sessionId);
+    const session = (await loadActiveSession(claim.sessionId))?.session;
     if (!session || session.status !== 'ACTIVE') {
       cleanupUploads();
       return res.status(400).json({ code: 'SESSION_INACTIVE', error: 'Lecture session is not currently active' });
