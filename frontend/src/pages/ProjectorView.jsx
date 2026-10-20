@@ -1,59 +1,40 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import api from '../api/client';
 import QRCode from 'qrcode';
-import { 
-  Maximize2, 
-  Minimize2, 
-  Users, 
-  ShieldCheck, 
-  Clock, 
-  Download, 
-  CheckCircle2, 
-  Radio, 
-  ArrowLeft,
-  Lock,
-  DoorOpen,
-  Sparkles
-} from 'lucide-react';
+import { Maximize2, Minimize2, ArrowLeft, Download, Eye, Zap, MapPin, ShieldCheck, Users } from 'lucide-react';
+import api from '../api/client';
+import { LogoMark } from '../components/Logo';
+import { formatTime, formatTimeSec, downloadSessionCsv, errorText } from '../lib/format';
 
 export default function ProjectorView() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
-  
+
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Rotating Token State
-  const [tokenData, setTokenData] = useState({
-    token: '--------',
-    pin: 7,
-    timestamp: Date.now(),
-    expiresInMs: 4000
-  });
+  // Rotating token pushed by the server over SSE
+  const [tokenData, setTokenData] = useState({ token: '--------', pin: 7, timestamp: Date.now(), expiresInMs: 4000 });
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [progressPercent, setProgressPercent] = useState(100);
 
-  // Live Roster State
   const [roster, setRoster] = useState([]);
   const [presentCount, setPresentCount] = useState(0);
+  const [enrolledCount, setEnrolledCount] = useState(0);
 
-  // Fetch initial session details
+  const [mobileTab, setMobileTab] = useState('QR');
+  const [isTogglingPin, setIsTogglingPin] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
   useEffect(() => {
     api.get(`/sessions/${sessionId}`)
-      .then((res) => {
-        setSession(res.data.session);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.response?.data?.error || 'Failed to load session');
-        setLoading(false);
-      });
+      .then((res) => setSession(res.data.session))
+      .catch((err) => setError(errorText(err, 'Failed to load session')))
+      .finally(() => setLoading(false));
   }, [sessionId]);
 
-  // Connect to SSE QR Stream.
   // EventSource cannot send an Authorization header, so we first exchange the
   // faculty login for a short-lived projector token scoped to this one session.
   useEffect(() => {
@@ -64,51 +45,31 @@ export default function ProjectorView() {
     api.post(`/sessions/${sessionId}/projector-token`)
       .then((res) => {
         if (cancelled) return;
-        eventSource = new EventSource(
-          `/api/sessions/${sessionId}/qr-feed?pt=${encodeURIComponent(res.data.projectorToken)}`
-        );
+        eventSource = new EventSource(`/api/sessions/${sessionId}/qr-feed?pt=${encodeURIComponent(res.data.projectorToken)}`);
 
         eventSource.onmessage = async (e) => {
           try {
             const data = JSON.parse(e.data);
             setTokenData(data);
             if (data.requirePin !== undefined) {
-              setSession((prev) => prev ? { ...prev, requirePin: data.requirePin } : prev);
+              setSession((prev) => (prev ? { ...prev, requirePin: data.requirePin } : prev));
             }
-
-            // Encode QR payload with token, session, timestamp, and requirePin flag
-            const qrPayload = JSON.stringify({
-              s: data.sessionId,
-              t: data.token,
-              ts: data.timestamp,
-              rp: !!data.requirePin
-            });
-
-            // Generate clean high-contrast QR SVG/DataURL
-            const url = await QRCode.toDataURL(qrPayload, {
-              width: 380,
-              margin: 1,
-              color: {
-                dark: '#000000',
-                light: '#ffffff'
-              }
-            });
+            const qrPayload = JSON.stringify({ s: data.sessionId, t: data.token, ts: data.timestamp, rp: !!data.requirePin });
+            const url = await QRCode.toDataURL(qrPayload, { width: 420, margin: 1, color: { dark: '#000000', light: '#ffffff' } });
             setQrDataUrl(url);
           } catch (err) {
             console.error('QR generation error:', err);
           }
         };
 
-        eventSource.onerror = () => {
-          console.warn('SSE connection interrupted, retrying...');
-        };
+        eventSource.onerror = () => console.warn('SSE connection interrupted, retrying...');
       })
       .catch((err) => {
         if (cancelled) return;
         setError(
           err.response?.status === 401
             ? 'Log in as the faculty who created this session to open the projector.'
-            : err.response?.data?.error || 'Could not start the projector feed'
+            : errorText(err, 'Could not start the projector feed')
         );
       });
 
@@ -118,84 +79,35 @@ export default function ProjectorView() {
     };
   }, [sessionId]);
 
-  // Smooth circular timer animation (4000ms loop)
+  // Pushes arrive at each rotation boundary; count down the time this code has left.
   useEffect(() => {
-    // Pushes arrive at each rotation boundary; count down the time this code has left.
     const startTime = Date.now();
     const windowMs = tokenData.expiresInMs || 4000;
     const interval = setInterval(() => {
       const remaining = Math.max(0, windowMs - (Date.now() - startTime));
       setProgressPercent((remaining / 4000) * 100);
     }, 50);
-
     return () => clearInterval(interval);
   }, [tokenData.token]);
 
-  // Poll live attendance roster every 2 seconds
+  // Live roster every 2 s
   useEffect(() => {
     if (!sessionId) return;
-
     const fetchRoster = () => {
       api.get(`/attendance/live-roster/${sessionId}`)
         .then((res) => {
           setRoster(res.data.roster);
           setPresentCount(res.data.count);
+          setEnrolledCount(res.data.enrolledCount || 0);
         })
         .catch(() => {});
     };
-
     fetchRoster();
     const interval = setInterval(fetchRoster, 2000);
     return () => clearInterval(interval);
   }, [sessionId]);
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
-    }
-  };
-
-  const [isExporting, setIsExporting] = useState(false);
-
-  const handleExportCSV = async () => {
-    setIsExporting(true);
-    try {
-      const response = await api.get(`/sessions/${sessionId}/export-csv`, {
-        responseType: 'blob'
-      });
-      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      const course = session?.courseCode || 'lecture';
-      link.setAttribute('download', `attendance_${course}_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Failed to export CSV: ' + (err.response?.data?.error || err.message));
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleConcludeSession = async () => {
-    if (window.confirm('Are you sure you want to conclude attendance for this lecture?')) {
-      await api.put(`/sessions/${sessionId}/conclude`);
-      navigate('/dashboard');
-    }
-  };
-
-  // Mobile layout state for teacher phone presenter mode ('QR' | 'ROSTER')
-  const [mobileTab, setMobileTab] = useState('QR');
-  const [isTogglingPin, setIsTogglingPin] = useState(false);
-
-  // Screen Wake Lock API (keeps teacher phone screen bright while presenting)
+  // Keep the presenting device's screen on
   useEffect(() => {
     let wakeLock = null;
     const requestWakeLock = async () => {
@@ -206,19 +118,48 @@ export default function ProjectorView() {
       } catch {}
     };
     requestWakeLock();
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        requestWakeLock();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const onVisible = () => document.visibilityState === 'visible' && requestWakeLock();
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('visibilitychange', onVisible);
       if (wakeLock) wakeLock.release().catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    else document.exitFullscreen().catch(() => {});
+  };
+
+  const handleExportCSV = async () => {
+    setIsExporting(true);
+    try {
+      await downloadSessionCsv(sessionId, session?.courseCode);
+    } catch (err) {
+      alert(`Export failed: ${errorText(err, 'unknown error')}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleConcludeSession = async () => {
+    const note = session?.courseId
+      ? 'Conclude this lecture? Enrolled students who have not checked in will be marked absent.'
+      : 'Conclude this lecture? The code stops working immediately.';
+    if (!window.confirm(note)) return;
+    try {
+      await api.put(`/sessions/${sessionId}/conclude`);
+      navigate(`/analytics?session=${sessionId}`);
+    } catch (err) {
+      alert(errorText(err, 'Could not conclude the lecture'));
+    }
+  };
 
   const handleTogglePin = async () => {
     setIsTogglingPin(true);
@@ -227,376 +168,170 @@ export default function ProjectorView() {
       setSession((prev) => ({ ...prev, requirePin: res.data.requirePin }));
       setTokenData((prev) => ({ ...prev, requirePin: res.data.requirePin }));
     } catch (err) {
-      alert('Failed to toggle PIN mode: ' + (err.response?.data?.error || err.message));
+      alert(errorText(err, 'Could not change the check-in mode'));
     } finally {
       setIsTogglingPin(false);
     }
   };
 
   if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '80vh', color: 'var(--text-secondary)' }}>
-        Loading Projector Stream...
-      </div>
-    );
+    return <div className="projector" style={{ display: 'grid', placeItems: 'center', color: '#8b8981' }}>Opening projector…</div>;
   }
 
   if (error || !session) {
     return (
-      <div className="main-content" style={{ textAlign: 'center', paddingTop: '4rem' }}>
-        <h2 style={{ color: 'var(--accent-red)', marginBottom: '1rem' }}>Session Not Found</h2>
-        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>{error}</p>
-        <Link to="/dashboard" className="btn btn-secondary">Back to Dashboard</Link>
+      <div className="projector" style={{ display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+        <div>
+          <h2 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>Can’t open this lecture</h2>
+          <p style={{ color: '#a9a79f', marginBottom: '1.25rem', maxWidth: '42ch' }}>{error}</p>
+          <Link to="/dashboard" className="btn btn-secondary">Back to lectures</Link>
+        </div>
       </div>
     );
   }
 
-  const capacity = session.classroomId?.capacity || 70;
-  const attendanceRate = Math.min(100, Math.round((presentCount / capacity) * 100));
+  const concluded = session.status !== 'ACTIVE';
+  const expected = enrolledCount || session.classroomId?.capacity || 0;
+  const rate = expected ? Math.min(100, Math.round((presentCount / expected) * 100)) : 0;
+  const secondsLeft = Math.ceil((progressPercent / 100) * 4);
+  const host = window.location.host;
 
   return (
-    <div className="projector-wrapper">
-      {/* Top Projector Header */}
-      <header style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'space-between',
-        paddingBottom: '1.25rem',
-        borderBottom: '1px solid #272730',
-        marginBottom: '1.25rem',
-        flexWrap: 'wrap',
-        gap: '1rem'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          <Link to="/dashboard" className="btn btn-secondary" style={{ padding: '0.45rem 0.85rem' }}>
-            <ArrowLeft size={16} /> Exit
+    <div className="projector">
+      <header className="proj-head">
+        <div className="proj-title">
+          <Link to="/dashboard" className="btn btn-secondary btn-sm btn-icon" aria-label="Back to lectures">
+            <ArrowLeft size={16} />
           </Link>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <span className="mono" style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-cyan)' }}>
-                {session.courseCode}
-              </span>
-              <h1 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
-                {session.courseName}
-              </h1>
+          <div style={{ minWidth: 0 }}>
+            <div className="proj-course">
+              {session.courseCode}
+              {session.branch ? ` · ${session.branch}` : ''}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '3px', flexWrap: 'wrap' }}>
-              <span>Room: <strong style={{ color: '#fff' }}>{session.classroomId?.roomCode}</strong></span>
-              <span>•</span>
-              <span>Faculty: <strong style={{ color: '#fff' }}>{session.facultyId?.name}</strong></span>
-              <span>•</span>
-              <span className="badge badge-emerald" style={{ padding: '0.2rem 0.6rem' }}><Radio size={12} /> Live O(1) Stream</span>
+            <div className="proj-name">{session.courseName}</div>
+            <div className="proj-meta">
+              <span>Room <strong>{session.classroomId?.roomCode}</strong></span>
+              <span>{session.facultyId?.name}</span>
+              <span>Started <strong>{formatTime(session.sessionDate)}</strong></span>
+              {!concluded && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', color: '#f3f2ed' }}>
+                  <span className="live-dot" /> Live
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        <div className="projector-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-          {/* Mode Toggle Button */}
-          <button 
-            onClick={handleTogglePin} 
-            disabled={isTogglingPin}
-            className={session.requirePin ? "btn btn-emerald" : "btn btn-secondary"}
-            style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.45rem', 
-              fontSize: '0.82rem',
-              borderColor: !session.requirePin ? 'var(--accent-cyan)' : undefined,
-              color: !session.requirePin ? 'var(--accent-cyan)' : undefined
-            }}
-            title="Click to toggle between Fast Mode (Direct Scan) and Strict Line-of-Sight PIN"
-          >
-            {session.requirePin ? <Lock size={15} /> : <Sparkles size={15} />}
-            <span>{isTogglingPin ? 'Toggling...' : session.requirePin ? 'PIN: Strict' : 'Fast Mode'}</span>
+        <div className="proj-actions">
+          <button onClick={handleTogglePin} disabled={isTogglingPin || concluded} className="btn btn-secondary btn-sm" title="Switch check-in mode">
+            {session.requirePin ? <Eye size={14} /> : <Zap size={14} />}
+            {isTogglingPin ? 'Switching…' : session.requirePin ? 'Screen PIN on' : 'Quick check-in'}
           </button>
-
-          <button onClick={handleExportCSV} disabled={isExporting} className="btn btn-secondary" style={{ fontSize: '0.82rem' }}>
-            <Download size={15} /> {isExporting ? 'Exporting...' : 'Export CSV'}
+          <button onClick={handleExportCSV} disabled={isExporting} className="btn btn-secondary btn-sm">
+            <Download size={14} /> {isExporting ? 'Preparing…' : 'CSV'}
           </button>
-          
-          <button onClick={handleConcludeSession} className="btn btn-danger" style={{ fontSize: '0.82rem' }}>
-            Conclude
-          </button>
-          
-          <button onClick={toggleFullscreen} className="btn btn-secondary" title="Toggle Fullscreen">
-            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          {!concluded && (
+            <button onClick={handleConcludeSession} className="btn btn-danger btn-sm">Conclude</button>
+          )}
+          <button onClick={toggleFullscreen} className="btn btn-secondary btn-sm btn-icon" title="Full screen" aria-label="Toggle full screen">
+            {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
         </div>
       </header>
 
-      {/* Mobile Tab Switcher for Teacher Phone Presenter Mode */}
-      <div className="mobile-only" style={{ gap: '0.5rem', marginBottom: '1.25rem', width: '100%' }}>
-        <button 
-          onClick={() => setMobileTab('QR')} 
-          className={mobileTab === 'QR' ? 'btn btn-primary' : 'btn btn-secondary'}
-          style={{ flex: 1, padding: '0.65rem', justifyContent: 'center', fontSize: '0.9rem' }}
-        >
-          📱 Broadcast QR
-        </button>
-        <button 
-          onClick={() => setMobileTab('ROSTER')} 
-          className={mobileTab === 'ROSTER' ? 'btn btn-primary' : 'btn btn-secondary'}
-          style={{ flex: 1, padding: '0.65rem', justifyContent: 'center', fontSize: '0.9rem' }}
-        >
-          👥 Live Roster ({presentCount})
-        </button>
+      <div className="proj-tabs" role="tablist">
+        <button role="tab" aria-selected={mobileTab === 'QR'} onClick={() => setMobileTab('QR')}>Code</button>
+        <button role="tab" aria-selected={mobileTab === 'ROSTER'} onClick={() => setMobileTab('ROSTER')}>Checked in ({presentCount})</button>
       </div>
 
-      {/* Main Split Grid */}
-      <div className="projector-split">
-        
-        {/* LEFT COLUMN: THE DYNAMIC PROJECTED QR & LINE-OF-SIGHT PIN */}
-        <div 
-          className={`projector-col-qr ${mobileTab !== 'QR' ? 'mobile-hidden' : ''}`}
-          style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            background: '#121217',
-            border: '1px solid #272730',
-            borderRadius: '20px',
-            padding: '2rem 1.5rem',
-            position: 'relative'
-          }}
-        >
-          {/* Mode Status Banner */}
-          {session.requirePin ? (
-            <div style={{ 
-              marginBottom: '1.25rem', 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '1.25rem',
-              background: 'rgba(16, 185, 129, 0.08)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              borderRadius: '14px',
-              padding: '0.8rem 1.25rem',
-              maxWidth: '440px',
-              width: '100%'
-            }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-emerald)', fontWeight: 700, marginBottom: '0.2rem' }}>
-                  Challenge PIN
-                </div>
-                <div className="mono" style={{ 
-                  fontSize: '2.4rem', 
-                  fontWeight: 800, 
-                  color: 'var(--accent-emerald)', 
-                  lineHeight: '1'
-                }}>
-                  {tokenData.pin}
-                </div>
-              </div>
-              <div style={{ textAlign: 'left', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.35' }}>
-                Students must glance at your screen and tap <strong style={{ color: '#fff' }}>PIN {tokenData.pin}</strong>. Rejects remote corridor scanning!
-              </div>
+      <div className="proj-body">
+        <section className={`proj-stage ${mobileTab !== 'QR' ? 'proj-hide-mobile' : ''}`}>
+          {concluded ? (
+            <div style={{ textAlign: 'center', color: '#a9a79f' }}>
+              <h2 style={{ fontSize: '1.4rem', marginBottom: '0.4rem' }}>This lecture has been concluded</h2>
+              <p>The code is no longer valid. {presentCount} students checked in.</p>
+              <Link to={`/analytics?session=${sessionId}`} className="btn btn-secondary" style={{ marginTop: '1.25rem' }}>View register</Link>
             </div>
           ) : (
-            <div style={{ 
-              marginBottom: '1.25rem', 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '0.85rem',
-              background: 'rgba(6, 182, 212, 0.08)',
-              border: '1px solid rgba(6, 182, 212, 0.3)',
-              borderRadius: '14px',
-              padding: '0.75rem 1.25rem',
-              maxWidth: '440px',
-              width: '100%'
-            }}>
-              <Sparkles size={22} color="var(--accent-cyan)" style={{ flexShrink: 0 }} />
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: '1.35' }}>
-                <strong style={{ color: 'var(--accent-cyan)' }}>Fast Mode Active:</strong> Students scan directly to biometric facial match with no PIN required. Ideal for phone presentation.
-              </div>
-            </div>
-          )}
+            <>
+              <p className="proj-instructions">
+                Open <strong>{host}/scan</strong> on your phone and point the camera at this code
+                {session.requirePin ? <>, then tap the <strong>digit shown on the right</strong>.</> : '.'}
+              </p>
 
-          {/* Quick Switch Mode Button */}
-          <button 
-            onClick={handleTogglePin} 
-            disabled={isTogglingPin}
-            className="btn btn-secondary"
-            style={{ fontSize: '0.78rem', padding: '0.35rem 0.8rem', marginBottom: '1.25rem', gap: '0.4rem' }}
-          >
-            {session.requirePin ? '⚡ Switch to Fast Mode (No PIN)' : '🔒 Switch to Strict PIN Mode'}
-          </button>
-
-          {/* Circular Countdown Progress Ring */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.85rem', 
-            marginBottom: '1.25rem',
-            background: 'rgba(255,255,255,0.03)',
-            padding: '0.5rem 1.15rem',
-            borderRadius: '999px',
-            border: '1px solid #272730'
-          }}>
-            <div style={{ position: 'relative', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="24" height="24" viewBox="0 0 36 36">
-                <path
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke="#272730"
-                  strokeWidth="3.5"
-                />
-                <path
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke="var(--accent-cyan)"
-                  strokeWidth="3.5"
-                  strokeDasharray={`${progressPercent}, 100`}
-                  style={{ transition: 'stroke-dasharray 0.05s linear' }}
-                />
-              </svg>
-            </div>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              Rotating Token (Expires in <strong style={{ color: '#fff' }}>{Math.ceil(progressPercent * 0.04)}s</strong>)
-            </span>
-          </div>
-
-          {/* High-Contrast QR Code Container */}
-          <div style={{ 
-            background: '#ffffff', 
-            padding: '1.25rem', 
-            borderRadius: '18px', 
-            boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            maxWidth: '100%',
-            width: '320px',
-            height: '320px'
-          }}>
-            {qrDataUrl ? (
-              <img 
-                src={qrDataUrl} 
-                alt="Dynamic Classroom QR" 
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} 
-              />
-            ) : (
-              <span style={{ color: '#000', fontWeight: 600 }}>Initializing QR...</span>
-            )}
-          </div>
-
-          {/* Security Badges */}
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', fontSize: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <span className="badge badge-zinc"><Lock size={12} /> HMAC-SHA256 Token</span>
-            <span className="badge badge-zinc"><DoorOpen size={12} /> Geofence {session.classroomId?.radiusMeters || 35}m</span>
-            <span className="badge badge-zinc"><ShieldCheck size={12} /> Screen Awake</span>
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: LIVE ATTENDANCE ROSTER & METRICS */}
-        <div 
-          className={`projector-col-roster ${mobileTab !== 'ROSTER' ? 'mobile-hidden' : ''}`}
-          style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            background: '#121217',
-            border: '1px solid #272730',
-            borderRadius: '20px',
-            padding: '1.75rem',
-            overflow: 'hidden'
-          }}
-        >
-          {/* Header Stats */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Live Verified Attendance</div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginTop: '0.2rem' }}>
-                <span style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {presentCount}
-                </span>
-                <span style={{ fontSize: '1.15rem', color: 'var(--text-secondary)' }}>
-                  / {capacity} Enrolled
-                </span>
-              </div>
-            </div>
-            <div className="badge badge-emerald" style={{ fontSize: '0.9rem', padding: '0.4rem 0.85rem' }}>
-              {attendanceRate}% Present
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div style={{ width: '100%', height: '8px', background: '#272730', borderRadius: '4px', overflow: 'hidden', marginBottom: '1.5rem' }}>
-            <div 
-              style={{ 
-                width: `${attendanceRate}%`, 
-                height: '100%', 
-                background: 'linear-gradient(90deg, var(--accent-emerald), #34d399)', 
-                transition: 'width 0.4s ease' 
-              }} 
-            />
-          </div>
-
-          {/* Live Stream List Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              Recent Verifications (Live Stream)
-            </span>
-            <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)' }}>
-              Auto-updating real-time
-            </span>
-          </div>
-
-          {/* Student Roster List */}
-          <div style={{ flex: 1, minHeight: '280px', maxHeight: '420px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {roster.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
-                <Users size={36} style={{ opacity: 0.3, marginBottom: '0.5rem' }} />
-                <p>Waiting for students to scan the broadcast QR code...</p>
-              </div>
-            ) : (
-              roster.map((student, idx) => (
-                <div 
-                  key={student._id || idx}
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between',
-                    padding: '0.75rem 1rem',
-                    background: '#181820',
-                    border: '1px solid #272730',
-                    borderRadius: '10px',
-                    animation: idx === 0 ? 'fadeIn 0.3s ease' : 'none'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <CheckCircle2 size={18} color="var(--accent-emerald)" />
-                    <div>
-                      <div className="mono" style={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffffff' }}>
-                        {student.rollNumber}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        {student.studentName}
-                      </div>
+              <div className="proj-qr-row">
+                <div>
+                  <div className="proj-qr">
+                    {qrDataUrl ? <img src={qrDataUrl} alt="Attendance code for this lecture" /> : <span className="proj-qr-wait">Connecting…</span>}
+                  </div>
+                  <div className="proj-timer" style={{ marginTop: '0.9rem' }}>
+                    <div className="proj-timer-bar">
+                      <div className="proj-timer-fill" style={{ width: `${progressPercent}%` }} />
+                    </div>
+                    <div className="proj-timer-text">
+                      <span>new code in {secondsLeft}s</span>
+                      <span>{tokenData.token?.slice(0, 8)}</span>
                     </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span className="badge badge-emerald" style={{ fontSize: '0.7rem' }}>
-                      {(student.verificationMetrics?.cosineSimilarity * 100).toFixed(0)}% Match
-                    </span>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {new Date(student.markedAt).toLocaleTimeString()}
+                </div>
+
+                {session.requirePin && (
+                  <div className="proj-pin">
+                    <div className="proj-pin-label">Screen PIN</div>
+                    <div className="proj-pin-digit">{tokenData.pin}</div>
+                    <div className="proj-pin-note">Changes with the code. Only people in the room can see it.</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="proj-chips">
+                <span className="proj-chip"><ShieldCheck size={13} /> Signed code, valid ~4 s</span>
+                <span className="proj-chip"><MapPin size={13} /> Inside {session.classroomId?.radiusMeters || 35} m of {session.classroomId?.roomCode}</span>
+                <span className="proj-chip"><LogoMark size={13} /> Face + blink check</span>
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className={`proj-roster ${mobileTab !== 'ROSTER' ? 'proj-hide-mobile' : ''}`}>
+          <div className="proj-count">
+            <div style={{ fontSize: '0.8rem', color: '#8b8981', marginBottom: '0.45rem' }}>Checked in</div>
+            <div className="proj-count-num">
+              {presentCount}
+              {expected ? <span>of {expected} {enrolledCount ? 'enrolled' : 'seats'}</span> : null}
+            </div>
+            {expected ? (
+              <div className="proj-count-bar"><div style={{ width: `${rate}%` }} /></div>
+            ) : null}
+          </div>
+          <div className="proj-list">
+            {roster.length === 0 ? (
+              <div className="proj-empty">
+                <Users size={28} style={{ margin: '0 auto 0.6rem', opacity: 0.5 }} />
+                Names appear here as students verify.
+              </div>
+            ) : (
+              roster.map((s) => (
+                <div className="proj-row" key={s._id}>
+                  <div>
+                    <div className="proj-roll">{s.rollNumber}</div>
+                    <div className="proj-sname">
+                      {s.studentName}
+                      {s.status === 'FLAGGED' && <span style={{ color: '#e2ab52' }}> · flagged</span>}
+                      {s.status === 'ABSENT' && <span style={{ color: '#ec8068' }}> · absent</span>}
                     </div>
+                  </div>
+                  <div className="proj-time">
+                    {s.status !== 'ABSENT' && s.verificationMetrics?.cosineSimilarity != null && (
+                      <div style={{ color: '#a9a79f' }}>{Math.round(s.verificationMetrics.cosineSimilarity * 100)}% match</div>
+                    )}
+                    {s.status !== 'ABSENT' && formatTimeSec(s.markedAt)}
                   </div>
                 </div>
               ))
             )}
           </div>
-
-          {/* Mobile Bottom Quick Actions */}
-          <div className="mobile-only" style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
-            <button onClick={handleExportCSV} disabled={isExporting} className="btn btn-secondary" style={{ flex: 1, padding: '0.65rem' }}>
-              <Download size={15} /> {isExporting ? 'Exporting...' : 'Export CSV'}
-            </button>
-            <button onClick={handleConcludeSession} className="btn btn-danger" style={{ flex: 1, padding: '0.65rem' }}>
-              Conclude
-            </button>
-          </div>
-        </div>
-
+        </section>
       </div>
     </div>
   );

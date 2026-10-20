@@ -5,8 +5,9 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
+  // Student pages pass their own token; only fall back to the faculty login when none was given
   const token = localStorage.getItem('campustrack_jwt');
-  if (token) {
+  if (token && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
