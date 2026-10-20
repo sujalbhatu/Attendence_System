@@ -3,6 +3,7 @@ import { Plus, Upload, BookOpen, AlertCircle, CheckCircle2, Search } from 'lucid
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
+import { SkeletonRows } from '../components/Skeleton';
 import { errorText } from '../lib/format';
 
 const currentAcademicYear = () => {
@@ -221,6 +222,7 @@ export default function BulkEnrollment() {
   const [tab, setTab] = useState('students');
   const [showNew, setShowNew] = useState(false);
   const [filter, setFilter] = useState('');
+  const [riskOnly, setRiskOnly] = useState(false);
 
   const loadCourses = (selectId) =>
     api.get('/courses')
@@ -246,11 +248,16 @@ export default function BulkEnrollment() {
   useEffect(() => { loadEnrollments(selectedId); }, [selectedId]);
 
   const course = courses.find((c) => c._id === selectedId);
+  const isAtRisk = (e) => e.attendance.total > 0 && e.attendance.percentage < 75;
   const shown = enrollments.filter((e) => {
     const q = filter.trim().toLowerCase();
+    if (riskOnly && !isAtRisk(e)) return false;
     return !q || e.student.rollNumber.toLowerCase().includes(q) || e.student.name?.toLowerCase().includes(q);
   });
-  const below = enrollments.filter((e) => e.attendance.total > 0 && e.attendance.percentage < 75).length;
+  const below = enrollments.filter(isAtRisk).length;
+  const held = enrollments.reduce((m, e) => Math.max(m, e.attendance.total), 0);
+  const rated = enrollments.filter((e) => e.attendance.total > 0);
+  const avgPct = rated.length ? rated.reduce((s, e) => s + e.attendance.percentage, 0) / rated.length : null;
 
   return (
     <>
@@ -268,7 +275,7 @@ export default function BulkEnrollment() {
       </div>
 
       {loading ? (
-        <div className="panel loading-line">Loading courses…</div>
+        <div className="panel"><SkeletonRows rows={5} /></div>
       ) : courses.length === 0 ? (
         <div className="panel empty">
           <BookOpen size={32} />
@@ -302,6 +309,24 @@ export default function BulkEnrollment() {
                 <div className="muted" style={{ fontSize: '0.82rem', marginTop: '0.2rem' }}>
                   {course.department} · Semester {course.semester}{course.credits != null ? ` · ${course.credits} credits` : ''}
                 </div>
+                <div className="tiles" style={{ marginTop: '1rem', marginBottom: 0 }}>
+                  <div className="tile">
+                    <div className="tile-label">Enrolled</div>
+                    <div className="tile-value">{loadingEnrollments ? '…' : enrollments.length}</div>
+                  </div>
+                  <div className="tile ink">
+                    <div className="tile-label">Lectures held</div>
+                    <div className="tile-value">{loadingEnrollments ? '…' : held}</div>
+                  </div>
+                  <div className="tile lime">
+                    <div className="tile-label">Average attendance</div>
+                    <div className="tile-value">{avgPct == null ? '—' : Math.round(avgPct)}{avgPct != null && <small>%</small>}</div>
+                  </div>
+                  <div className={`tile ${below ? 'warn' : ''}`}>
+                    <div className="tile-label">Below 75%</div>
+                    <div className="tile-value">{loadingEnrollments ? '…' : below}</div>
+                  </div>
+                </div>
                 <div className="tabs" role="tablist" style={{ marginTop: '1rem', marginBottom: 0 }}>
                   <button type="button" role="tab" className="tab" aria-selected={tab === 'students'} onClick={() => setTab('students')}>
                     Enrolled ({enrollments.length})
@@ -321,10 +346,18 @@ export default function BulkEnrollment() {
                       <Search size={15} />
                       <input className="input" placeholder="Filter students" value={filter} onChange={(e) => setFilter(e.target.value)} />
                     </div>
-                    {below > 0 && <span className="tag tag-absent">{below} below 75%</span>}
+                    <div className="chips">
+                      <button type="button" className="chip" aria-pressed={!riskOnly} onClick={() => setRiskOnly(false)}>All <span className="count">{enrollments.length}</span></button>
+                      <button type="button" className="chip" aria-pressed={riskOnly} onClick={() => setRiskOnly(true)}>At risk <span className="count">{below}</span></button>
+                    </div>
                   </div>
                   {loadingEnrollments ? (
-                    <div className="loading-line">Loading students…</div>
+                    <SkeletonRows rows={4} />
+                  ) : riskOnly && below === 0 ? (
+                    <div className="empty">
+                      <h3>Nobody below 75%</h3>
+                      <p>Every student with recorded lectures is above the line.</p>
+                    </div>
                   ) : enrollments.length === 0 ? (
                     <div className="empty">
                       <h3>Nobody enrolled yet</h3>
@@ -332,7 +365,7 @@ export default function BulkEnrollment() {
                       <button className="btn btn-secondary" onClick={() => setTab('add')}>Add students</button>
                     </div>
                   ) : (
-                    <div className="table-scroll">
+                    <div className="table-scroll tall">
                       <table className="table" style={{ minWidth: 560 }}>
                         <thead>
                           <tr>

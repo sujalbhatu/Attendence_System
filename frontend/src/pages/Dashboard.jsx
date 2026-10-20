@@ -4,13 +4,14 @@ import { Plus, Download, MonitorPlay, Zap, Eye, CalendarDays, AlertCircle } from
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
+import { SkeletonRows, SkeletonTiles } from '../components/Skeleton';
 import { formatDay, formatTime, greeting, downloadSessionCsv, errorText } from '../lib/format';
 
 const OTHER = 'other';
 
-function StartLectureModal({ classrooms, assignments, onClose }) {
+function StartLectureModal({ classrooms, assignments, initialAssignmentId, onClose }) {
   const navigate = useNavigate();
-  const [assignmentId, setAssignmentId] = useState(assignments[0]?._id || OTHER);
+  const [assignmentId, setAssignmentId] = useState(initialAssignmentId || assignments[0]?._id || OTHER);
   const [courseCode, setCourseCode] = useState('');
   const [courseName, setCourseName] = useState('');
   const [classroomId, setClassroomId] = useState(classrooms[0]?._id || '');
@@ -123,13 +124,48 @@ function StartLectureModal({ classrooms, assignments, onClose }) {
   );
 }
 
+// Present count per lecture, oldest to newest, with the average as a dashed line.
+function TrendChart({ sessions }) {
+  const recent = [...sessions].slice(0, 12).reverse();
+  if (recent.length === 0) {
+    return <div className="chart-empty">Bars appear here after your first lecture.</div>;
+  }
+  const values = recent.map((s) => s.stats?.presentCount || 0);
+  const max = Math.max(4, ...values);
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  return (
+    <>
+      <div className="chart-bars">
+        <div className="chart-avg" style={{ bottom: `${(avg / max) * 100}%` }}><i>avg {avg.toFixed(1)}</i></div>
+        {recent.map((s, i) => {
+          const h = (values[i] / max) * 100;
+          return (
+            <Link
+              to={s.status === 'ACTIVE' ? `/projector/${s._id}` : `/analytics?session=${s._id}`}
+              key={s._id}
+              className={`chart-bar ${s.status === 'ACTIVE' ? 'live' : ''}`}
+              title={`${s.courseCode} · ${formatDay(s.sessionDate)} · ${values[i]} present`}
+            >
+              <span style={{ height: `${h}%` }} />
+              <b style={{ bottom: `calc(${h}% + 4px)` }}>{values[i]}</b>
+            </Link>
+          );
+        })}
+      </div>
+      <div className="chart-labels">
+        {recent.map((s) => <span key={s._id}>{s.courseCode}</span>)}
+      </div>
+    </>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [classrooms, setClassrooms] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showStart, setShowStart] = useState(false);
+  const [startFor, setStartFor] = useState(null); // null = closed, '' = default course, else assignment id
   const [exportingId, setExportingId] = useState(null);
 
   useEffect(() => {
@@ -150,15 +186,15 @@ export default function Dashboard() {
   const live = sessions.filter((s) => s.status === 'ACTIVE');
 
   const stats = useMemo(() => {
-    const concluded = sessions.filter((s) => s.status !== 'ACTIVE');
     const checkIns = sessions.reduce((n, s) => n + (s.stats?.presentCount || 0), 0);
     const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const today = new Date().toDateString();
     return {
       total: sessions.length,
-      concluded: concluded.length,
       checkIns,
       avg: sessions.length ? checkIns / sessions.length : 0,
       thisWeek: sessions.filter((s) => new Date(s.sessionDate).getTime() > weekAgo).length,
+      today: sessions.filter((s) => new Date(s.sessionDate).toDateString() === today).length,
       flagged: sessions.reduce((n, s) => n + (s.stats?.flaggedCount || 0), 0)
     };
   }, [sessions]);
@@ -175,6 +211,7 @@ export default function Dashboard() {
   };
 
   const firstName = user?.name?.replace(/^(dr|prof)\.?\s+/i, '').split(' ')[0];
+  const current = live[0];
 
   return (
     <>
@@ -182,83 +219,146 @@ export default function Dashboard() {
         <div>
           <div className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</div>
           <h1>{greeting()}{firstName ? `, ${firstName}` : ''}</h1>
-          <p>Your lectures, newest first. Start one to put a live code on the projector.</p>
-        </div>
-        <div className="page-head-actions">
-          <button className="btn btn-primary" onClick={() => setShowStart(true)} disabled={loading}>
-            <Plus size={16} /> Start a lecture
-          </button>
         </div>
       </div>
 
-      {live.map((s) => (
-        <div key={s._id} className="callout" style={{ borderColor: 'var(--line-strong)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0 }}>
-            <span className="live-dot" />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>
-                <span className="mono" style={{ fontWeight: 500 }}>{s.courseCode}</span> · {s.courseName}
-              </div>
-              <div className="muted" style={{ fontSize: '0.82rem' }}>
-                Live in {s.classroomId?.roomCode || 'room'} since {formatTime(s.sessionDate)} · {s.stats?.presentCount || 0} checked in
+      {/* Today band: the one thing a faculty opens this page for */}
+      <section className="today">
+        {current ? (
+          <>
+            <div>
+              <span className="today-kicker"><span className="live-dot" /> Live now</span>
+              <h2>{current.courseCode} · {current.courseName}</h2>
+              <p>Room {current.classroomId?.roomCode || '—'} · started {formatTime(current.sessionDate)}{live.length > 1 ? ` · ${live.length - 1} more running` : ''}</p>
+              <div className="today-actions" style={{ marginTop: '1rem' }}>
+                <Link to={`/projector/${current._id}`} className="btn btn-lime"><MonitorPlay size={16} /> Open projector</Link>
+                <button className="btn btn-on-ink" onClick={() => setStartFor('')}><Plus size={16} /> Start another</button>
               </div>
             </div>
-          </div>
-          <Link to={`/projector/${s._id}`} className="btn btn-primary btn-sm">
-            <MonitorPlay size={14} /> Open projector
-          </Link>
-        </div>
-      ))}
+            <div className="today-count">
+              {current.stats?.presentCount || 0}
+              <small>checked in so far</small>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <span className="today-kicker">Ready when you are</span>
+              <h2>Start a lecture and put the code on the projector.</h2>
+              <p>
+                {stats.today
+                  ? `${stats.today} lecture${stats.today === 1 ? '' : 's'} recorded today.`
+                  : 'Nothing recorded today yet.'}{' '}
+                Students check in from their seats in about fifteen seconds.
+              </p>
+              <div className="today-actions" style={{ marginTop: '1rem' }}>
+                <button className="btn btn-lime" onClick={() => setStartFor('')} disabled={loading}><Plus size={16} /> Start a lecture</button>
+                <Link to="/analytics" className="btn btn-on-ink">Open reports</Link>
+              </div>
+            </div>
+            <div className="today-count">
+              {stats.thisWeek}
+              <small>lectures this week</small>
+            </div>
+          </>
+        )}
+      </section>
 
-      <div className="stat-strip">
-        <div className="stat">
-          <div className="stat-label">Lectures recorded</div>
-          <div className="stat-value">{stats.total}</div>
-          <div className="stat-note">{stats.thisWeek} in the last 7 days</div>
+      {loading ? (
+        <SkeletonTiles />
+      ) : (
+        <div className="tiles">
+          <div className="tile">
+            <div className="tile-label">Lectures recorded</div>
+            <div className="tile-value">{stats.total}</div>
+            <div className="tile-note">{stats.thisWeek} in the last 7 days</div>
+          </div>
+          <div className="tile ink">
+            <div className="tile-label">Check-ins</div>
+            <div className="tile-value">{stats.checkIns}</div>
+            <div className="tile-note">face-verified, all lectures</div>
+          </div>
+          <div className="tile lime">
+            <div className="tile-label">Average per lecture</div>
+            <div className="tile-value">{stats.avg.toFixed(1)}</div>
+            <div className="tile-note">students present</div>
+          </div>
+          <div className={`tile ${stats.flagged ? 'warn' : ''}`}>
+            <div className="tile-label">Flagged for review</div>
+            <div className="tile-value">{stats.flagged}</div>
+            <div className="tile-note">low match or liveness doubt</div>
+          </div>
         </div>
-        <div className="stat">
-          <div className="stat-label">Check-ins</div>
-          <div className="stat-value">{stats.checkIns}</div>
-          <div className="stat-note">face-verified, all lectures</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Average per lecture</div>
-          <div className="stat-value">{stats.avg.toFixed(1)}</div>
-          <div className="stat-note">students present</div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Flagged for review</div>
-          <div className="stat-value">{stats.flagged}</div>
-          <div className="stat-note">low match or liveness doubt</div>
-        </div>
+      )}
+
+      <div className="dash-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Attendance by lecture</h2>
+            <span className="muted">last {Math.min(sessions.length, 12)} · present</span>
+          </div>
+          <div className="chart">
+            {loading ? <span className="skel" style={{ height: 180 }} /> : <TrendChart sessions={sessions} />}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Your courses</h2>
+            <Link to="/enrollment" className="link" style={{ fontSize: '0.82rem' }}>Manage</Link>
+          </div>
+          {loading ? (
+            <SkeletonRows rows={3} />
+          ) : assignments.length === 0 ? (
+            <div className="empty" style={{ padding: '2rem 1.25rem' }}>
+              <h3>No courses assigned</h3>
+              <p>Assign yourself a course so lectures can mark absentees automatically.</p>
+              <Link to="/enrollment" className="btn btn-secondary btn-sm">Go to Courses</Link>
+            </div>
+          ) : (
+            <div>
+              {assignments.slice(0, 5).map((a) => (
+                <div className="course-quick" key={a._id}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="mono">{a.courseId?.courseCode} · {a.branch}</div>
+                    <div className="cell-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.courseId?.courseName}</div>
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setStartFor(a._id)}>
+                    <MonitorPlay size={14} /> Start
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
-      <section className="panel">
+      <section className="panel" style={{ overflow: 'hidden' }}>
         <div className="panel-head">
           <h2>Recent lectures</h2>
-          <span className="muted">Last {Math.min(sessions.length, 20)}</span>
+          <span className="muted">newest first</span>
         </div>
 
         {loading ? (
-          <div className="loading-line">Loading lectures…</div>
+          <SkeletonRows rows={5} />
         ) : sessions.length === 0 ? (
           <div className="empty">
             <CalendarDays size={32} />
             <h3>No lectures yet</h3>
             <p>Start your first lecture and the projector will show a code students scan from their seats.</p>
-            <button className="btn btn-primary" onClick={() => setShowStart(true)}>
+            <button className="btn btn-primary" onClick={() => setStartFor('')}>
               <Plus size={16} /> Start a lecture
             </button>
           </div>
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll tall">
             <table className="table table-min">
               <thead>
                 <tr>
                   <th>Course</th>
                   <th>Room</th>
                   <th>When</th>
-                  <th>Check-in</th>
+                  <th>Status</th>
                   <th className="right">Present</th>
                   <th />
                 </tr>
@@ -279,12 +379,12 @@ export default function Dashboard() {
                       {s.status === 'ACTIVE' ? (
                         <span className="tag tag-accent tag-dot">Live</span>
                       ) : (
-                        <span className="tag">{s.requirePin ? 'With PIN' : 'Quick'}</span>
+                        <span className="tag tag-outline">{s.requirePin ? 'Concluded · PIN' : 'Concluded'}</span>
                       )}
                     </td>
-                    <td className="right mono num">
-                      {s.stats?.presentCount || 0}
-                      {s.stats?.flaggedCount ? <span className="muted"> +{s.stats.flaggedCount}</span> : null}
+                    <td className="right">
+                      <span className="mono num" style={{ fontSize: '1rem', fontWeight: 600 }}>{s.stats?.presentCount || 0}</span>
+                      {s.stats?.flaggedCount ? <span className="tag tag-flagged" style={{ marginLeft: '0.4rem' }}>+{s.stats.flaggedCount}</span> : null}
                     </td>
                     <td>
                       <div className="row-actions">
@@ -300,7 +400,7 @@ export default function Dashboard() {
                           title="Download CSV"
                           aria-label={`Download CSV for ${s.courseCode}`}
                         >
-                          <Download size={15} className={exportingId === s._id ? 'spin' : ''} />
+                          <Download size={15} />
                         </button>
                       </div>
                     </td>
@@ -312,8 +412,13 @@ export default function Dashboard() {
         )}
       </section>
 
-      {showStart && (
-        <StartLectureModal classrooms={classrooms} assignments={assignments} onClose={() => setShowStart(false)} />
+      {startFor !== null && (
+        <StartLectureModal
+          classrooms={classrooms}
+          assignments={assignments}
+          initialAssignmentId={startFor || undefined}
+          onClose={() => setStartFor(null)}
+        />
       )}
     </>
   );

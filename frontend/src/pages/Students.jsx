@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Camera, KeyRound, Trash2, Search, CheckCircle2, Users, AlertCircle, Copy } from 'lucide-react';
 import api from '../api/client';
 import Modal from '../components/Modal';
-import { errorText, formatDate } from '../lib/format';
+import { errorText, formatDate, initials } from '../lib/format';
+import { SkeletonRows, SkeletonTiles } from '../components/Skeleton';
 
 function AddStudentModal({ onClose, onCreated }) {
   const [rollNumber, setRollNumber] = useState('');
@@ -153,6 +154,7 @@ export default function Students() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [view, setView] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
   const [enrolling, setEnrolling] = useState(null);
   const [issued, setIssued] = useState(null);
@@ -197,8 +199,14 @@ export default function Students() {
   };
 
   const q = search.trim().toLowerCase();
-  const shown = students.filter((s) => !q || s.rollNumber.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
+  const VIEWS = {
+    all: () => true,
+    noface: (s) => !s.isEnrolled,
+    locked: (s) => s.canSignIn === false
+  };
+  const shown = students.filter((s) => VIEWS[view](s) && (!q || s.rollNumber.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)));
   const withFace = students.filter((s) => s.isEnrolled).length;
+  const locked = students.filter(VIEWS.locked).length;
 
   return (
     <>
@@ -231,19 +239,48 @@ export default function Students() {
         </div>
       )}
 
+      {loading ? (
+        <SkeletonTiles />
+      ) : (
+        <div className="tiles">
+          <div className="tile">
+            <div className="tile-label">Students</div>
+            <div className="tile-value">{students.length}</div>
+            <div className="tile-note">in the directory</div>
+          </div>
+          <div className="tile ink">
+            <div className="tile-label">Face on file</div>
+            <div className="tile-value">{withFace}</div>
+            <div className="tile-note">ready to check in</div>
+          </div>
+          <div className="tile lime">
+            <div className="tile-label">Coverage</div>
+            <div className="tile-value">{students.length ? Math.round((withFace / students.length) * 100) : 0}<small>%</small></div>
+            <div className="tile-note">faces captured</div>
+          </div>
+          <div className={`tile ${locked ? 'warn' : ''}`}>
+            <div className="tile-label">Can’t sign in</div>
+            <div className="tile-value">{locked}</div>
+            <div className="tile-note">{locked ? 'issue a temporary password' : 'everyone has a password'}</div>
+          </div>
+        </div>
+      )}
+
       <section className="panel" style={{ overflow: 'hidden' }}>
         <div className="toolbar">
           <div className="input-wrap">
             <Search size={15} />
             <input className="input" placeholder="Search roll number or name" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <span className="muted" style={{ fontSize: '0.8rem' }}>
-            {students.length} students · {withFace} with a face on file
-          </span>
+          <div className="chips" role="group" aria-label="Show">
+            <button type="button" className="chip" aria-pressed={view === 'all'} onClick={() => setView('all')}>All <span className="count">{students.length}</span></button>
+            <button type="button" className="chip" aria-pressed={view === 'noface'} onClick={() => setView('noface')}>Needs face <span className="count">{students.length - withFace}</span></button>
+            <button type="button" className="chip" aria-pressed={view === 'locked'} onClick={() => setView('locked')}>Can’t sign in <span className="count">{locked}</span></button>
+          </div>
         </div>
 
         {loading ? (
-          <div className="loading-line">Loading students…</div>
+          <SkeletonRows rows={5} />
         ) : students.length === 0 ? (
           <div className="empty">
             <Users size={32} />
@@ -252,9 +289,12 @@ export default function Students() {
             <button className="btn btn-primary" onClick={() => setShowAdd(true)}><Plus size={16} /> Add student</button>
           </div>
         ) : shown.length === 0 ? (
-          <div className="empty"><h3>No matches</h3><p>Nobody matches “{search}”.</p></div>
+          <div className="empty">
+            <h3>{search ? 'No matches' : 'Nobody in this view'}</h3>
+            <p>{search ? `Nobody matches “${search}”.` : view === 'locked' ? 'Every student can sign in.' : 'Every student has a face on file.'}</p>
+          </div>
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll tall">
             <table className="table table-min">
               <thead>
                 <tr>
@@ -269,8 +309,13 @@ export default function Students() {
                 {shown.map((s) => (
                   <tr key={s._id}>
                     <td>
-                      <div className="cell-title">{s.name}</div>
-                      <div className="cell-sub mono">{s.rollNumber}{s.email ? ` · ${s.email}` : ''}</div>
+                      <div className="who">
+                        <span className={`avatar ${s.isEnrolled ? 'ok' : ''}`}>{initials(s.name)}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="cell-title">{s.name}</div>
+                          <div className="cell-sub mono">{s.rollNumber}{s.email ? ` · ${s.email}` : ''}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="soft" style={{ fontSize: '0.84rem' }}>{s.department}{s.batch ? ` · ${s.batch}` : ''}</td>
                     <td>

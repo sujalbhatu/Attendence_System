@@ -7,7 +7,7 @@ import ThemeToggle from '../components/ThemeToggle';
 
 const REPO_URL = 'https://github.com/sujalbhatu/Attendence_System';
 const WINDOW_MS = 4000;
-const ENROLLED = 64;
+const ENROLLED = 120;
 
 // Sample check-ins for the hero (made-up roll numbers and names)
 const SAMPLE = [
@@ -61,7 +61,7 @@ function HeroStage() {
     };
   }, []);
 
-  const count = 38 + ((tick * 3) % 27);
+  const count = 74 + ((tick * 4) % 47);
   const rows = Array.from({ length: 6 }, (_, i) => SAMPLE[(tick * 3 + SAMPLE.length - i) % SAMPLE.length]);
   const latest = rows[0];
   const r = 46;
@@ -258,8 +258,8 @@ function Race() {
     <div ref={ref} className={`lp-race ${go ? 'go' : ''}`}>
       <div>
         <div className="lp-lane-top">
-          <div className="lp-lane-name">Calling names<small>64 students × ~6 s each, one at a time</small></div>
-          <div className="lp-lane-time">6 min 24 s</div>
+          <div className="lp-lane-name">Calling names<small>120 students × ~5 s each, one at a time</small></div>
+          <div className="lp-lane-time">10:00</div>
         </div>
         <div className="lp-track"><div className="lp-fill slow" /></div>
       </div>
@@ -348,9 +348,9 @@ export default function LandingPage() {
               <div className="lp-stat-text">A screenshot forwarded to the hostel is already dead.</div>
             </div>
             <div className="lp-stat">
-              <div className="lp-stat-num">25×</div>
+              <div className="lp-stat-num">40×</div>
               <div className="lp-stat-label">Faster than a roll call</div>
-              <div className="lp-stat-text">15 seconds instead of six minutes for a 64-student section.</div>
+              <div className="lp-stat-text">15 seconds instead of ten minutes for a 120-student section.</div>
             </div>
             <div className="lp-stat">
               <div className="lp-stat-num">512</div>
@@ -409,9 +409,9 @@ export default function LandingPage() {
           <div className="lp-head reveal">
             <div>
               <span className="lp-kicker">The difference</span>
-              <h2 className="lp-display">Six minutes, or fifteen seconds.</h2>
+              <h2 className="lp-display">Ten minutes, or fifteen seconds.</h2>
             </div>
-            <p>Same register, same section of 64. One way spends the start of every lecture reading names aloud. The other is over before you’ve opened your slides.</p>
+            <p>Same register, same section of 120. One way spends the start of every lecture reading names aloud. The other is over before you’ve opened your slides.</p>
           </div>
           <Race />
           <div className="lp-race-notes">
@@ -508,7 +508,7 @@ export default function LandingPage() {
 
       <section className="lp-cta-band">
         <div className="wrap">
-          <h2 className="lp-display">Give the first five minutes back to the lecture.</h2>
+          <h2 className="lp-display">Give the first ten minutes back to the lecture.</h2>
           <p>Faculty start a lecture in two clicks. Students check in without installing anything.</p>
           <div className="lp-cta">
             <Link to="/login" className="btn btn-lg lp-btn-ink">Faculty sign in <ArrowRight size={17} /></Link>

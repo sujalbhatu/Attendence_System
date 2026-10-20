@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { Download, FileBarChart, Search } from 'lucide-react';
 import api from '../api/client';
 import { formatDay, formatTime, formatTimeSec, percent, downloadSessionCsv, errorText } from '../lib/format';
+import { SkeletonRows } from '../components/Skeleton';
 
 const STATUS_TAG = {
   PRESENT: 'tag-present',
@@ -18,6 +19,7 @@ export default function Analytics() {
   const [enrolledCount, setEnrolledCount] = useState(0);
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [filter, setFilter] = useState('');
+  const [status, setStatus] = useState('ALL');
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
@@ -50,6 +52,7 @@ export default function Analytics() {
 
   const shown = roster.filter((r) => {
     const q = filter.trim().toLowerCase();
+    if (status !== 'ALL' && r.status !== status) return false;
     return !q || r.rollNumber?.toLowerCase().includes(q) || r.studentName?.toLowerCase().includes(q);
   });
 
@@ -86,7 +89,7 @@ export default function Analytics() {
       </div>
 
       {loading ? (
-        <div className="panel loading-line">Loading lectures…</div>
+        <div className="panel"><SkeletonRows rows={6} /></div>
       ) : sessions.length === 0 ? (
         <div className="panel empty">
           <FileBarChart size={32} />
@@ -143,15 +146,38 @@ export default function Analytics() {
                   </span>
                 </div>
 
-                <dl className="kv" style={{ gridTemplateColumns: 'repeat(4, auto)', justifyContent: 'start', columnGap: '2.25rem', marginTop: '1.1rem' }}>
-                  <div><dt>Present</dt><dd className="mono" style={{ fontSize: '1.25rem' }}>{counts.PRESENT}</dd></div>
-                  <div><dt>Flagged</dt><dd className="mono" style={{ fontSize: '1.25rem' }}>{counts.FLAGGED}</dd></div>
-                  <div><dt>Absent</dt><dd className="mono" style={{ fontSize: '1.25rem' }}>{counts.ABSENT}</dd></div>
-                  <div>
-                    <dt>{enrolledCount ? 'Of enrolled' : 'Of seats'}</dt>
-                    <dd className="mono" style={{ fontSize: '1.25rem' }}>{rate == null ? '—' : percent(rate)}</dd>
+              </div>
+            )}
+
+            {selected && (
+              <div className="verdict">
+                <div className="verdict-pct" style={{ color: rate == null ? 'var(--ink-3)' : rate >= 0.75 ? 'var(--present)' : 'var(--absent)' }}>
+                  {rate == null ? '—' : percent(rate)}
+                  <small>present, of {expected || '—'} {enrolledCount ? 'enrolled' : 'seats'}</small>
+                </div>
+                <div>
+                  <div className="stack-wrap">
+                    <div className="stack-bar">
+                      {expected > 0 && (
+                        <>
+                          <span className="p" style={{ width: `${(counts.PRESENT / expected) * 100}%` }} />
+                          <span className="f" style={{ width: `${(counts.FLAGGED / expected) * 100}%` }} />
+                          <span className="a" style={{ width: `${(counts.ABSENT / expected) * 100}%` }} />
+                        </>
+                      )}
+                    </div>
+                    <div className="meter-mark" style={{ left: '75%' }} />
+                    <span className="mark-label" style={{ left: '75%' }}>75%</span>
                   </div>
-                </dl>
+                  <div className="legend">
+                    <span><i style={{ background: 'var(--present)' }} /> Present <b>{counts.PRESENT}</b></span>
+                    <span><i style={{ background: 'var(--flagged)' }} /> Flagged <b>{counts.FLAGGED}</b></span>
+                    <span><i style={{ background: 'var(--absent)' }} /> Absent <b>{counts.ABSENT}</b></span>
+                    {selected.status !== 'ACTIVE' && !selected.courseId && (
+                      <span className="muted">Not linked to a course, so absentees weren’t recorded.</span>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -160,18 +186,24 @@ export default function Analytics() {
                 <Search size={15} />
                 <input className="input" placeholder="Filter by roll number or name" value={filter} onChange={(e) => setFilter(e.target.value)} />
               </div>
-              <span className="muted" style={{ fontSize: '0.8rem' }}>{shown.length} of {roster.length}</span>
+              <div className="chips" role="group" aria-label="Status">
+                {[['ALL', 'All', roster.length], ['PRESENT', 'Present', counts.PRESENT], ['FLAGGED', 'Flagged', counts.FLAGGED], ['ABSENT', 'Absent', counts.ABSENT]].map(([key, label, n]) => (
+                  <button key={key} type="button" className="chip" aria-pressed={status === key} onClick={() => setStatus(key)}>
+                    {label} <span className="count">{n}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {loadingRoster ? (
-              <div className="loading-line">Loading register…</div>
+              <SkeletonRows rows={6} />
             ) : shown.length === 0 ? (
               <div className="empty">
                 <h3>{roster.length ? 'No matches' : 'No check-ins recorded'}</h3>
                 <p>{roster.length ? 'Try a different roll number or name.' : 'Students appear here as soon as they verify.'}</p>
               </div>
             ) : (
-              <div className="table-scroll">
+              <div className="table-scroll tall">
                 <table className="table table-min">
                   <thead>
                     <tr>

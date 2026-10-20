@@ -3,16 +3,39 @@ import { Plus, Crosshair, DoorOpen, MapPin, Archive, AlertCircle } from 'lucide-
 import api from '../api/client';
 import Modal from '../components/Modal';
 import { errorText } from '../lib/format';
+import { SkeletonCards } from '../components/Skeleton';
 
-// Draws the geofence to scale against a fixed 100 m frame, so rooms can be compared at a glance.
-function FenceGlyph({ radius }) {
-  const r = Math.max(4, Math.min(30, (radius / 100) * 30));
+// A site-plan view of the geofence, drawn to scale: the frame shows a "nice" distance
+// (50 m, 100 m, 250 m …) across, with a scale bar, so rooms can be compared at a glance.
+function RoomMap({ room }) {
+  const radius = room.radiusMeters || 35;
+  const nice = [50, 100, 150, 250, 500, 1000, 2000, 5000];
+  const frame = nice.find((n) => n >= radius * 2.6) || radius * 2.6; // metres across the frame height
+  const H = 170;
+  const W = 340;
+  const px = H / frame; // pixels per metre
+  const r = radius * px;
+  const bar = nice.find((n) => n * px >= 40) || frame / 4;
   return (
-    <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true" style={{ flexShrink: 0 }}>
-      <circle cx="32" cy="32" r="30" fill="none" stroke="var(--line-strong)" strokeDasharray="2 3" />
-      <circle cx="32" cy="32" r={r} fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="1.25" />
-      <circle cx="32" cy="32" r="2" fill="var(--accent)" />
-    </svg>
+    <div className="room-map" aria-label={`Geofence of ${radius} metres around ${room.roomCode}`}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid slice" width="100%" height="100%" style={{ position: 'absolute', inset: 0 }}>
+        {[0.5, 1.5, 2.5].map((m) => (
+          <circle key={m} cx={W / 2} cy={H / 2} r={r * m} fill="none" stroke="var(--line-strong)" strokeDasharray="2 4" />
+        ))}
+        <circle cx={W / 2} cy={H / 2} r={r} fill="rgba(214, 245, 59, 0.35)" stroke="#7f9600" strokeWidth="2" />
+        <circle cx={W / 2} cy={H / 2} r="4" fill="var(--ink)" stroke="var(--surface)" strokeWidth="2.5" />
+        <g transform={`translate(${W - 22} 22)`} fill="var(--ink-2)">
+          <path d="M0 -10 L5 6 L0 3 L-5 6 Z" />
+          <text y="18" textAnchor="middle" fontSize="9" fontFamily="IBM Plex Mono, monospace">N</text>
+        </g>
+        <g transform={`translate(${W - 16 - bar * px} ${H - 16})`}>
+          <rect width={bar * px} height="4" fill="var(--ink)" />
+          <rect width={(bar * px) / 2} height="4" fill="var(--surface)" stroke="var(--ink)" strokeWidth="0.8" />
+          <text x={(bar * px) / 2} y="-5" textAnchor="middle" fontSize="9" fill="var(--ink-2)" fontFamily="IBM Plex Mono, monospace">{bar} m</text>
+        </g>
+      </svg>
+      <span className="room-map-tag">{room.roomCode} · {radius} m</span>
+    </div>
   );
 }
 
@@ -162,7 +185,7 @@ export default function Classrooms() {
       </div>
 
       {loading ? (
-        <div className="panel loading-line">Loading classrooms…</div>
+        <SkeletonCards count={3} />
       ) : classrooms.length === 0 ? (
         <div className="panel empty">
           <DoorOpen size={32} />
@@ -181,10 +204,10 @@ export default function Classrooms() {
                 </div>
                 <span className="tag">{c.capacity} seats</span>
               </div>
-              <div className="room-fence">
-                <FenceGlyph radius={c.radiusMeters} />
+              <RoomMap room={c} />
+              <div className="room-fence" style={{ margin: '0 0 0.9rem' }}>
                 <div className="room-fence-text">
-                  <div><span className="mono">{c.radiusMeters} m</span> radius</div>
+                  <div><span className="mono">{c.radiusMeters} m</span> radius{c.radiusMeters > 200 ? <span className="tag tag-flagged" style={{ marginLeft: '0.4rem' }}>very wide</span> : null}</div>
                   <div className="mono muted" style={{ fontSize: '0.76rem' }}>
                     {Number(c.latitude).toFixed(5)}, {Number(c.longitude).toFixed(5)}
                   </div>
