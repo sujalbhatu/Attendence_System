@@ -3,7 +3,7 @@ import Redis from 'ioredis';
 /**
  * Optional Redis connection, shared by the whole process.
  *
- *  REDIS_URL unset   -> null: callers fall back to their in-process behaviour
+ *  REDIS_URL unset or 'off' -> null: callers fall back to their in-process behaviour
  *  REDIS_URL=mock    -> in-memory ioredis-mock (tests, no server needed)
  *  REDIS_URL=redis://… or rediss://… -> a real server (TLS for rediss)
  *
@@ -41,7 +41,7 @@ export async function initRedis() {
   if (initialised) return client;
   initialised = true;
   const url = process.env.REDIS_URL;
-  if (!url) return null;
+  if (!url || url === 'off') return null;
   client = await create(url);
   return client;
 }
@@ -53,9 +53,17 @@ export const getRedis = () => client;
 export const redisReady = () => !!client && (client.status === undefined || client.status === 'ready');
 
 // Pub/Sub needs its own connection: a subscribed client can't run normal commands.
+// It queues commands until connected (the shared client fails fast instead), so a
+// psubscribe issued right after start-up isn't rejected before the socket is ready.
+// ioredis re-subscribes on its own after a reconnect.
 export async function getSubscriber() {
   if (!client) return null;
-  if (!subscriber) subscriber = client.duplicate();
+  if (!subscriber) {
+    subscriber = typeof client.duplicate === 'function' && client.options
+      ? client.duplicate({ enableOfflineQueue: true, maxRetriesPerRequest: null })
+      : client.duplicate();
+    subscriber.on?.('error', () => {}); // the shared client already logs connection errors
+  }
   return subscriber;
 }
 

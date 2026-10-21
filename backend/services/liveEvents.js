@@ -13,33 +13,60 @@ const local = new EventEmitter();
 local.setMaxListeners(0);
 
 const CHANNEL_PREFIX = rkey('live', '');
-let bridged = false;
+let bridgedSub = null; // the subscriber connection our pattern subscription lives on
+let bridging = null;
+const withHandler = new WeakSet();
 export const liveStats = { published: 0, delivered: 0 };
 
+const onMessage = (_pattern, channel, message) => {
+  const sessionId = channel.slice(CHANNEL_PREFIX.length);
+  try {
+    liveStats.delivered++;
+    local.emit(sessionId, JSON.parse(message));
+  } catch {
+    // ignore malformed messages
+  }
+};
+
+// One pattern subscription per process. It only counts once the subscribe has succeeded,
+// and it is tied to the subscriber connection it was made on, so a failed attempt or a
+// new connection (after closeRedis/initRedis) subscribes again instead of being assumed.
 async function ensureBridge() {
-  if (bridged) return;
   const sub = await getSubscriber();
-  if (!sub) return;
-  bridged = true;
-  await sub.psubscribe(`${CHANNEL_PREFIX}*`);
-  sub.on('pmessage', (_pattern, channel, message) => {
-    const sessionId = channel.slice(CHANNEL_PREFIX.length);
-    try {
-      liveStats.delivered++;
-      local.emit(sessionId, JSON.parse(message));
-    } catch {
-      // ignore malformed messages
-    }
-  });
+  if (!sub || bridgedSub === sub) return;
+  if (!bridging) {
+    bridging = (async () => {
+      if (!withHandler.has(sub)) {
+        sub.on('pmessage', onMessage);
+        withHandler.add(sub);
+      }
+      await sub.psubscribe(`${CHANNEL_PREFIX}*`);
+      bridgedSub = sub;
+    })().catch((err) => {
+      console.error('[LIVE] Redis subscribe failed, using local events:', err.message);
+    }).finally(() => {
+      bridging = null;
+    });
+  }
+  await bridging;
 }
+
+const isBridged = async () => {
+  const sub = await getSubscriber();
+  return !!sub && bridgedSub === sub;
+};
 
 export async function publishSessionEvent(sessionId, event) {
   const payload = { ...event, sessionId: String(sessionId), at: Date.now() };
   liveStats.published++;
   const redis = getRedis();
   if (redis && redisReady()) {
+    await ensureBridge();
+  }
+  // Publish through Redis only when this process is listening on it too; otherwise a
+  // message could go out on a channel no one here subscribed to and be lost.
+  if (redis && redisReady() && (await isBridged())) {
     try {
-      await ensureBridge();
       await redis.publish(CHANNEL_PREFIX + String(sessionId), JSON.stringify(payload));
       return;
     } catch {
@@ -51,10 +78,10 @@ export async function publishSessionEvent(sessionId, event) {
 
 // Returns an unsubscribe function.
 export async function subscribeSession(sessionId, handler) {
-  await ensureBridge().catch(() => {});
+  await ensureBridge();
   const key = String(sessionId);
   local.on(key, handler);
   return () => local.off(key, handler);
 }
 
-export const usingRedisBridge = () => bridged;
+export const usingRedisBridge = () => !!bridgedSub;
