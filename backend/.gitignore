@@ -1,0 +1,11 @@
+
+# load test fixtures and results (contain throwaway tokens)
+loadtest/.fixture.json
+loadtest/results-*.json
+loadtest/frame.jpg
+loadtest/server-*.log*
+loadtest/health-*.json
+loadtest/k6-*.log
+
+# multer temp files from local runs
+uploads/

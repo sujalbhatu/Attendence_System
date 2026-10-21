@@ -2,6 +2,7 @@ import { SEED_DEMO } from './config.js'; // loads .env and fails fast on missing
 import { createApp } from './app.js';
 import { getPool } from './db/index.js';
 import { migrate } from './db/migrate.js';
+import { initRedis } from './lib/redis.js';
 import { seedDemoData } from './db/seed.js';
 import { deleteExpiredClaims } from './repositories/attendance.js';
 
@@ -14,6 +15,9 @@ async function start() {
 
   // Applies any new db/migrations/*.sql files (safe to run on every start)
   await migrate();
+
+  // Optional: shared state for rate limits, claims and live updates across instances
+  if (await initRedis()) console.log('[INFO] Redis enabled');
   if (SEED_DEMO) await seedDemoData();
 
   // Postgres has no TTL index, so expired claims are swept periodically
@@ -22,9 +26,15 @@ async function start() {
     deleteExpiredClaims().catch((err) => console.error('[CLAIM CLEANUP]', err.message));
   }, CLAIM_CLEANUP_INTERVAL_MS).unref();
 
-  createApp().listen(PORT, '0.0.0.0', () => {
+  const server = createApp().listen(PORT, '0.0.0.0', () => {
     console.log(`[READY] CampusTrack Gateway listening on http://0.0.0.0:${PORT}`);
   });
+  // A phone waits its assigned upload slot (up to 6 s) between the claim and the face
+  // upload on the same connection. Node's default 5 s keep-alive closed that connection
+  // just as the upload started ("use of closed network connection" under load), so keep
+  // idle connections longer than the longest slot, and longer than a proxy's own timeout.
+  server.keepAliveTimeout = 65 * 1000;
+  server.headersTimeout = 66 * 1000;
 }
 
 start().catch((err) => {

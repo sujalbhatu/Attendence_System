@@ -13,12 +13,19 @@ const upload = multer({
 });
 
 // Keyed by student account, not IP: a whole class shares one campus Wi-Fi IP.
-const studentLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyFn: byStudent });
+const studentLimiter = rateLimit({ name: 'student-attendance', windowMs: 60 * 1000, max: 20, keyFn: byStudent });
+
+// Stamp arrival before any DB work: a QR code or PIN is judged by when the scan reached
+// the server, so a slow database under load doesn't expire a code that was valid on arrival.
+const stampArrival = (req, _res, next) => {
+  req.receivedAt = Date.now();
+  next();
+};
 
 const router = express.Router();
 
-router.post('/claim', studentProtect, studentLimiter, claimAttendance); // Phase 1: presence claim (token checked at scan time)
-router.post('/claim/pin', studentProtect, studentLimiter, submitPin); // Phase 1b: Line-of-Sight PIN
+router.post('/claim', stampArrival, studentProtect, studentLimiter, claimAttendance); // Phase 1: presence claim (token checked at scan time)
+router.post('/claim/pin', stampArrival, studentProtect, studentLimiter, submitPin); // Phase 1b: Line-of-Sight PIN
 router.post('/verify', studentProtect, studentLimiter, upload.array('images', 16), verifyBiometrics); // Phase 2: face + liveness
 router.get('/live-roster/:sessionId', protect, getLiveRoster); // Faculty projector feed
 

@@ -12,6 +12,8 @@ import { findCourseById } from '../repositories/courses.js';
 import { concludeWithAbsentees, sessionRecordsByRoll } from '../repositories/attendance.js';
 import { TokenService } from '../services/tokenService.js';
 import { StaggerService } from '../services/staggerService.js';
+import { invalidateActiveSession } from '../services/sessionCache.js';
+import { publishSessionEvent, subscribeSession } from '../services/liveEvents.js';
 import { JWT_SECRET } from '../config.js';
 
 const PROJECTOR_TOKEN_TTL = '4h';
@@ -163,9 +165,21 @@ export const streamQRFeed = async (req, res) => {
 
     pushToken();
 
+    // Live check-ins and mode changes, pushed the moment they happen (no roster polling)
+    const unsubscribe = await subscribeSession(session.id, (event) => {
+      if (closed) return;
+      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      if (event.type === 'concluded') {
+        closed = true;
+        if (timer) clearTimeout(timer);
+        res.end();
+      }
+    });
+
     req.on('close', () => {
       closed = true;
       if (timer) clearTimeout(timer);
+      unsubscribe();
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -178,6 +192,8 @@ export const togglePinRequirement = async (req, res) => {
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
     const requirePin = await toggleRequirePin(session.id);
+    await invalidateActiveSession(session.id);
+    publishSessionEvent(session.id, { type: 'pin-mode', requirePin }).catch(() => {});
 
     res.json({
       message: `Line-of-Sight PIN is now ${requirePin ? 'ENABLED' : 'DISABLED'}`,
@@ -198,7 +214,8 @@ export const concludeSession = async (req, res) => {
     // Auto-absent: every enrolled student without any record (PRESENT or FLAGGED) gets ABSENT,
     // in the same transaction that concludes the session.
     const stats = await concludeWithAbsentees(session);
-    StaggerService.resetSession(session.id);
+    await Promise.all([StaggerService.resetSession(session.id), invalidateActiveSession(session.id)]);
+    publishSessionEvent(session.id, { type: 'concluded' }).catch(() => {});
     const concluded = await findSessionById(session.id);
 
     res.json({

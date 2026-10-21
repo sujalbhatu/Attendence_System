@@ -1,8 +1,9 @@
-import axios from 'axios';
-import FormData from 'form-data';
 import fs from 'fs';
 import { isUuid } from '../db/index.js';
-import { findSessionById, findOwnedSession, getSessionSecret } from '../repositories/sessions.js';
+import { findOwnedSession } from '../repositories/sessions.js';
+import { getActiveSession } from '../services/sessionCache.js';
+import { publishSessionEvent } from '../services/liveEvents.js';
+import { verifyFace } from '../services/verifyQueue.js';
 import { getFaceEmbedding } from '../repositories/students.js';
 import {
   hasAttendanceRecord,
@@ -24,8 +25,7 @@ import {
   PIN_WINDOW_MS,
   MAX_PIN_ATTEMPTS,
   CLAIM_TTL_MS,
-  ALLOW_SELF_ENROLLMENT,
-  ML_SERVICE_URL
+  ALLOW_SELF_ENROLLMENT
 } from '../config.js';
 
 const MATCH_THRESHOLD = 0.65;
@@ -45,21 +45,18 @@ const acceptedResponse = (claim, student, classroom) => ({
 });
 
 // Moves a claim into the biometric phase and gives it a staggered upload slot.
-const promoteToBiometrics = (claim, sessionId) =>
-  promoteClaim(claim.id, { assignedDelayMs: StaggerService.assignUploadDelay(sessionId), ttlMs: CLAIM_TTL_MS });
+const promoteToBiometrics = async (claim, sessionId) =>
+  promoteClaim(claim.id, { assignedDelayMs: await StaggerService.assignUploadDelay(sessionId), ttlMs: CLAIM_TTL_MS });
 
-// The session with its classroom, plus the secret that only token checks may read
-const loadActiveSession = async (sessionId) => {
-  const secret = await getSessionSecret(sessionId);
-  if (!secret || secret.status !== 'ACTIVE') return null;
-  const session = await findSessionById(sessionId);
-  return session && { session, totpSecret: secret.totp_secret };
-};
+// The session with its classroom, plus the secret that only token checks may read.
+// Cached in Redis for a few seconds when enabled (see services/sessionCache.js).
+const loadActiveSession = (sessionId) => getActiveSession(sessionId);
 
 /**
  * Phase 1: presence claim.
  * The student is identified by their login token (never by a typed roll number).
- * The scanned QR token is checked against its own 4 s window here, at scan time.
+ * The scanned QR token is checked against its own 4 s window, as of the moment the scan
+ * reached the server (req.receivedAt), not after the DB lookups below.
  * If the session needs the Line-of-Sight PIN, that is a separate step (submitPin),
  * so the PIN tap no longer has to fit inside the token window.
  */
@@ -83,7 +80,8 @@ export const claimAttendance = async (req, res) => {
 
     const tokenCheck = TokenService.verifyToken(totpSecret, session.id, scannedToken, {
       intervalSeconds: session.tokenIntervalSeconds || 4,
-      graceMs: TOKEN_GRACE_MS
+      graceMs: TOKEN_GRACE_MS,
+      nowMs: req.receivedAt ?? Date.now()
     });
     if (!tokenCheck.valid) {
       return res.status(400).json({
@@ -130,7 +128,7 @@ export const claimAttendance = async (req, res) => {
       tokenStep: tokenCheck.step,
       status: needsPin ? 'AWAITING_PIN' : 'AWAITING_BIOMETRICS',
       pinWindowMs: needsPin ? PIN_WINDOW_MS : null,
-      assignedDelayMs: needsPin ? 0 : StaggerService.assignUploadDelay(session.id),
+      assignedDelayMs: needsPin ? 0 : await StaggerService.assignUploadDelay(session.id),
       ttlMs: CLAIM_TTL_MS
     });
 
@@ -186,7 +184,8 @@ export const submitPin = async (req, res) => {
 
     const pinCheck = TokenService.verifyPin(totpSecret, session.id, pin, {
       intervalSeconds: session.tokenIntervalSeconds || 4,
-      graceMs: PIN_GRACE_MS
+      graceMs: PIN_GRACE_MS,
+      nowMs: req.receivedAt ?? Date.now()
     });
 
     if (!pinCheck.valid) {
@@ -236,7 +235,7 @@ export const verifyBiometrics = async (req, res) => {
       });
     }
 
-    const session = await findSessionById(claim.sessionId);
+    const session = (await loadActiveSession(claim.sessionId))?.session;
     if (!session || session.status !== 'ACTIVE') {
       cleanupUploads();
       return res.status(400).json({ code: 'SESSION_INACTIVE', error: 'Lecture session is not currently active' });
@@ -260,23 +259,16 @@ export const verifyBiometrics = async (req, res) => {
 
     const requireLiveness = session.requireLiveness !== false;
 
-    const form = new FormData();
-    for (const f of req.files) {
-      form.append('images', fs.createReadStream(f.path));
-    }
-    if (wasEnrolled) {
-      form.append('enrolled_embedding', JSON.stringify(storedEmbedding));
-    }
-    form.append('threshold', String(MATCH_THRESHOLD));
-    form.append('require_liveness', requireLiveness ? 'true' : 'false');
-
-    const mlRes = await axios.post(`${ML_SERVICE_URL}/verify`, form, {
-      headers: form.getHeaders(),
-      timeout: 15000
+    // Through the micro-batching face-check queue (services/verifyQueue.js)
+    const mlData = await verifyFace({
+      files: req.files,
+      enrolledEmbedding: wasEnrolled ? storedEmbedding : null,
+      threshold: MATCH_THRESHOLD,
+      requireLiveness
     });
     cleanupUploads();
 
-    const { matched, similarity, liveness, embedding: probeEmbedding, error: mlError } = mlRes.data;
+    const { matched, similarity, liveness, embedding: probeEmbedding, error: mlError } = mlData;
 
     // Fail closed: no liveness result from the ML service counts as a failed check
     if (requireLiveness && liveness?.is_live !== true) {
@@ -348,6 +340,9 @@ export const verifyBiometrics = async (req, res) => {
       // Idempotency: the UNIQUE (session_id, student_id) constraint rejected a duplicate.
       return res.status(200).json({ status: 'PRESENT', message: 'Attendance already recorded for this session' });
     }
+
+    // Push to every projector showing this lecture (any instance, via Redis Pub/Sub)
+    publishSessionEvent(session.id, { type: 'checkin', record: result.record }).catch(() => {});
 
     return res.status(200).json({
       status,

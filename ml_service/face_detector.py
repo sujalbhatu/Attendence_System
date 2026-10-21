@@ -2,8 +2,9 @@ import cv2
 import numpy as np
 from PIL import Image
 
-_model_file = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-_face_cascade = cv2.CascadeClassifier(_model_file)
+from cascades import cascade
+
+FACE_CASCADE = "haarcascade_frontalface_default.xml"
 
 
 def _detect_faces(image_bgr):
@@ -11,7 +12,7 @@ def _detect_faces(image_bgr):
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     
     # 1. Standard detection
-    faces = _face_cascade.detectMultiScale(
+    faces = cascade(FACE_CASCADE).detectMultiScale(
         gray,
         scaleFactor=1.08,
         minNeighbors=4,
@@ -23,7 +24,7 @@ def _detect_faces(image_bgr):
 
     # 2. Histogram equalization pass (helps with backlight/dim light)
     eq_gray = cv2.equalizeHist(gray)
-    faces = _face_cascade.detectMultiScale(
+    faces = cascade(FACE_CASCADE).detectMultiScale(
         eq_gray,
         scaleFactor=1.08,
         minNeighbors=3,
@@ -34,7 +35,7 @@ def _detect_faces(image_bgr):
         return faces
 
     # 3. Looser detection pass
-    faces = _face_cascade.detectMultiScale(
+    faces = cascade(FACE_CASCADE).detectMultiScale(
         gray,
         scaleFactor=1.05,
         minNeighbors=3,
