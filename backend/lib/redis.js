@@ -33,6 +33,20 @@ async function create(url) {
   c.on('ready', () => {
     c._rolloneLoggedError = false;
   });
+  // Wait (briefly) for the first connection: callers check redisReady() and would
+  // otherwise skip Redis for the first requests after start-up. If Redis is down we
+  // still start; ioredis keeps reconnecting and callers use their fallbacks meanwhile.
+  await new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      c.off('ready', done);
+      c.off('error', done);
+      resolve();
+    };
+    const timer = setTimeout(done, 5000);
+    c.once('ready', done);
+    c.once('error', done);
+  });
   return c;
 }
 
@@ -67,8 +81,16 @@ export async function getSubscriber() {
   return subscriber;
 }
 
+// quit() is rejected on a connection that isn't up (offline queue off) and would leave
+// the socket open, keeping the process alive; disconnect() those instead.
+const close = (c) => {
+  if (!c) return undefined;
+  if (c.status === undefined || c.status === 'ready') return c.quit();
+  return c.disconnect();
+};
+
 export async function closeRedis() {
-  await Promise.allSettled([client?.quit?.(), subscriber?.quit?.()]);
+  await Promise.allSettled([close(client), close(subscriber)]);
   client = null;
   subscriber = null;
   initialised = false;
