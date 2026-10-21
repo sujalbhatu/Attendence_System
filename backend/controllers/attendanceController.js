@@ -55,7 +55,8 @@ const loadActiveSession = (sessionId) => getActiveSession(sessionId);
 /**
  * Phase 1: presence claim.
  * The student is identified by their login token (never by a typed roll number).
- * The scanned QR token is checked against its own 4 s window here, at scan time.
+ * The scanned QR token is checked against its own 4 s window, as of the moment the scan
+ * reached the server (req.receivedAt), not after the DB lookups below.
  * If the session needs the Line-of-Sight PIN, that is a separate step (submitPin),
  * so the PIN tap no longer has to fit inside the token window.
  */
@@ -79,7 +80,8 @@ export const claimAttendance = async (req, res) => {
 
     const tokenCheck = TokenService.verifyToken(totpSecret, session.id, scannedToken, {
       intervalSeconds: session.tokenIntervalSeconds || 4,
-      graceMs: TOKEN_GRACE_MS
+      graceMs: TOKEN_GRACE_MS,
+      nowMs: req.receivedAt ?? Date.now()
     });
     if (!tokenCheck.valid) {
       return res.status(400).json({
@@ -182,7 +184,8 @@ export const submitPin = async (req, res) => {
 
     const pinCheck = TokenService.verifyPin(totpSecret, session.id, pin, {
       intervalSeconds: session.tokenIntervalSeconds || 4,
-      graceMs: PIN_GRACE_MS
+      graceMs: PIN_GRACE_MS,
+      nowMs: req.receivedAt ?? Date.now()
     });
 
     if (!pinCheck.valid) {
