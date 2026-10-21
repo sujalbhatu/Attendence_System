@@ -26,9 +26,15 @@ async function start() {
     deleteExpiredClaims().catch((err) => console.error('[CLAIM CLEANUP]', err.message));
   }, CLAIM_CLEANUP_INTERVAL_MS).unref();
 
-  createApp().listen(PORT, '0.0.0.0', () => {
+  const server = createApp().listen(PORT, '0.0.0.0', () => {
     console.log(`[READY] CampusTrack Gateway listening on http://0.0.0.0:${PORT}`);
   });
+  // A phone waits its assigned upload slot (up to 6 s) between the claim and the face
+  // upload on the same connection. Node's default 5 s keep-alive closed that connection
+  // just as the upload started ("use of closed network connection" under load), so keep
+  // idle connections longer than the longest slot, and longer than a proxy's own timeout.
+  server.keepAliveTimeout = 65 * 1000;
+  server.headersTimeout = 66 * 1000;
 }
 
 start().catch((err) => {
