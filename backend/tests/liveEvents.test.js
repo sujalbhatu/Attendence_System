@@ -9,7 +9,7 @@ import request from 'supertest';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 
-process.env.REDIS_URL ||= 'mock';
+if (!process.env.REDIS_URL || process.env.REDIS_URL === 'off') process.env.REDIS_URL = 'mock';
 const {
   resetDatabase, truncateAll, closePool, makeFaculty, makeStudent, makeSession, studentToken, embedding
 } = await import('./helpers.js');

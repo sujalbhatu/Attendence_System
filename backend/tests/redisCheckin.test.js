@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 
 // Must be set before helpers.js initialises Redis, hence the dynamic imports below
-process.env.REDIS_URL ||= 'mock';
+if (!process.env.REDIS_URL || process.env.REDIS_URL === 'off') process.env.REDIS_URL = 'mock';
 const { resetDatabase, truncateAll, closePool, makeFaculty, makeSession, facultyToken } = await import('./helpers.js');
 const { createApp } = await import('../app.js');
 const { getRedis, rkey } = await import('../lib/redis.js');
