@@ -176,15 +176,19 @@ describe('Line-of-Sight PIN', () => {
     const early = await verify(student, ticket);
     assert.equal(early.body.code, 'CLAIM_EXPIRED');
 
-    const live = (await liveCode(session)).pin;
-    const prev = (await liveCode(session, Date.now() - 4000)).pin;
-    const wrong = [1, 2, 3, 4, 5, 6, 7, 8, 9].find((d) => d !== live && d !== prev);
+    // The PIN on screen changes every 4 s, so pick a digit that is wrong right now (not the
+    // current, previous or next window's PIN) just before each submit, not once up front.
+    const wrongPin = async () => {
+      const now = Date.now();
+      const near = await Promise.all([now - 4000, now, now + 4000].map(async (t) => (await liveCode(session, t)).pin));
+      return [1, 2, 3, 4, 5, 6, 7, 8, 9].find((d) => !near.includes(d));
+    };
 
-    const first = await submitPin(student, ticket, wrong);
+    const first = await submitPin(student, ticket, await wrongPin());
     assert.equal(first.body.code, 'PIN_MISMATCH');
     assert.equal(first.body.attemptsLeft, 1);
 
-    const second = await submitPin(student, ticket, wrong);
+    const second = await submitPin(student, ticket, await wrongPin());
     assert.equal(second.body.code, 'PIN_LOCKED');
     const { rows } = await query('SELECT count(*)::int AS n FROM claims');
     assert.equal(rows[0].n, 0, 'the locked claim is deleted');
