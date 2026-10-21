@@ -10,6 +10,19 @@ await query('DELETE FROM attendance_records');
 await query('DELETE FROM claims');
 await query(`UPDATE sessions SET present_count = 0, flagged_count = 0, status = 'ACTIVE', concluded_at = NULL`);
 
+// Redis keeps the upload-slot counter (3 h TTL) and the cached session; without clearing
+// them every student of the next run would count as arrival 121+ and get the 6 s slot.
+const { initRedis, closeRedis } = await import('../lib/redis.js');
+const { StaggerService } = await import('../services/staggerService.js');
+const { invalidateActiveSession } = await import('../services/sessionCache.js');
+await initRedis();
+const { rows: sessions } = await query('SELECT id FROM sessions');
+for (const { id } of sessions) {
+  await StaggerService.resetSession(id);
+  await invalidateActiveSession(id);
+}
+await closeRedis();
+
 // Re-sign the student tokens so a fixture built hours ago still works
 const fixturePath = new URL('./.fixture.json', import.meta.url);
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));

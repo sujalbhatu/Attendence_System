@@ -13,8 +13,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
-node loadtest/reset.mjs
-
 $env:DATABASE_URL = $env:LOADTEST_DATABASE_URL
 $env:DATABASE_URL_UNPOOLED = if ($env:LOADTEST_DATABASE_URL_UNPOOLED) { $env:LOADTEST_DATABASE_URL_UNPOOLED } else { $env:LOADTEST_DATABASE_URL }
 $env:PORT = "$Port"
@@ -22,6 +20,9 @@ $env:NODE_ENV = 'production'
 if ($Redis -eq 'env') { Remove-Item Env:REDIS_URL -ErrorAction SilentlyContinue } # the real server from .env
 elseif ($Redis) { $env:REDIS_URL = $Redis } else { $env:REDIS_URL = 'off' } # 'off', not unset: unset would fall through to .env
 $env:ML_BATCH_VERIFY = if ($Batch) { 'true' } else { 'false' }
+
+# After REDIS_URL is set, so the reset also clears this configuration's Redis keys
+node loadtest/reset.mjs
 
 $log = Join-Path $PSScriptRoot "server-$Label.log"
 Remove-Item (Join-Path $PSScriptRoot "k6-$Label.log") -ErrorAction SilentlyContinue
