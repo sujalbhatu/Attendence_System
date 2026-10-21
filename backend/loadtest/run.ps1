@@ -1,6 +1,7 @@
 # Runs one k6 load-test configuration against a fresh local API instance.
 #   .\loadtest\run.ps1 -Label baseline            # Redis off, batching off
-#   .\loadtest\run.ps1 -Label redis -Redis mock   # Redis on
+#   .\loadtest\run.ps1 -Label redis -Redis mock   # Redis on (in-memory mock)
+#   .\loadtest\run.ps1 -Label upstash -Redis env  # Redis on (REDIS_URL from .env)
 #   .\loadtest\run.ps1 -Label redis-batch -Redis mock -Batch
 # Needs LOADTEST_DATABASE_URL (a throwaway Neon branch), ML on ML_SERVICE_URL, and k6.
 param(
@@ -18,7 +19,8 @@ $env:DATABASE_URL = $env:LOADTEST_DATABASE_URL
 $env:DATABASE_URL_UNPOOLED = if ($env:LOADTEST_DATABASE_URL_UNPOOLED) { $env:LOADTEST_DATABASE_URL_UNPOOLED } else { $env:LOADTEST_DATABASE_URL }
 $env:PORT = "$Port"
 $env:NODE_ENV = 'production'
-if ($Redis) { $env:REDIS_URL = $Redis } else { $env:REDIS_URL = 'off' } # 'off', not unset: unset would fall through to .env
+if ($Redis -eq 'env') { Remove-Item Env:REDIS_URL -ErrorAction SilentlyContinue } # the real server from .env
+elseif ($Redis) { $env:REDIS_URL = $Redis } else { $env:REDIS_URL = 'off' } # 'off', not unset: unset would fall through to .env
 $env:ML_BATCH_VERIFY = if ($Batch) { 'true' } else { 'false' }
 
 $log = Join-Path $PSScriptRoot "server-$Label.log"
