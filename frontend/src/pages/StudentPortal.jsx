@@ -162,6 +162,8 @@ export default function StudentPortal() {
       setNewPassword('');
       setMustChangePassword(false);
       setToken(res.data.token);
+      // First login: go straight on to registering the face from this phone
+      if (res.data.student?.faceStatus === 'NONE') window.location.assign('/scan');
     } catch (err) {
       setError(err.response?.data?.error || 'Could not update password');
     } finally {
@@ -282,7 +284,14 @@ export default function StudentPortal() {
           </div>
           <h1 style={{ marginTop: '0.35rem' }}>{student?.name || student?.rollNumber}</h1>
           <div style={{ marginTop: '1rem' }}>
-            <Link to="/scan" className="btn btn-primary"><ScanLine size={16} /> Check in to a lecture</Link>
+            {student?.faceStatus === 'NONE' ? (
+              <Link to="/scan" className="btn btn-primary"><ScanLine size={16} /> Register your face</Link>
+            ) : (
+              <Link to="/scan" className="btn btn-primary"><ScanLine size={16} /> Check in to a lecture</Link>
+            )}
+            {student?.faceStatus === 'PENDING' && (
+              <p className="muted" style={{ fontSize: '0.82rem', marginTop: '0.6rem' }}>Your face is waiting for your faculty’s approval.</p>
+            )}
           </div>
         </div>
         <div className="portal-overall">

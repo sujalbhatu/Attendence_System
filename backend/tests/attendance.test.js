@@ -1,6 +1,7 @@
 import { test, describe, before, beforeEach, after, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
+import { readdir } from 'fs/promises';
 import axios from 'axios';
 import {
   resetDatabase, truncateAll, closePool, query,
@@ -305,7 +306,8 @@ describe('database plumbing', () => {
   test('migrations are idempotent', async () => {
     await migrate({ log: () => {} });
     const { rows } = await query('SELECT count(*)::int AS n FROM schema_migrations');
-    assert.equal(rows[0].n, 1);
+    const files = (await readdir(new URL('../db/migrations/', import.meta.url))).filter((f) => f.endsWith('.sql'));
+    assert.equal(rows[0].n, files.length);
   });
 
   test('expired claims are swept', async () => {

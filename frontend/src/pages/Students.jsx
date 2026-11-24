@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Camera, KeyRound, Trash2, Search, CheckCircle2, Users, AlertCircle, Copy } from 'lucide-react';
+import { Plus, Camera, KeyRound, Trash2, Search, CheckCircle2, Users, AlertCircle, Copy, UserCheck } from 'lucide-react';
 import api from '../api/client';
 import Modal from '../components/Modal';
 import { errorText, formatDate, initials } from '../lib/format';
@@ -150,6 +150,62 @@ function FaceEnrollModal({ student, onClose, onDone }) {
   );
 }
 
+// A student registered their face from their own phone: faculty checks it is really them
+function ReviewFaceModal({ student, onClose, onDone }) {
+  const [thumb, setThumb] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get(`/students/${student._id}/pending-face`)
+      .then((res) => setThumb(res.data.thumb))
+      .catch((err) => setError(errorText(err, 'Could not load the photo')));
+  }, [student._id]);
+
+  const decide = async (action) => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.post(`/students/${student._id}/${action}-face`);
+      onDone();
+      onClose();
+    } catch (err) {
+      setError(errorText(err, 'Could not save your decision'));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Approve ${student.name}'s face?`}
+      description="Approve only if this is the student standing in front of you. After approval they can check in."
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={() => decide('reject')} disabled={busy}>Reject</button>
+          <button type="button" className="btn btn-primary" onClick={() => decide('approve')} disabled={busy || !thumb}>
+            <UserCheck size={16} /> {busy ? 'Saving…' : 'Approve'}
+          </button>
+        </>
+      }
+    >
+      {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}><AlertCircle size={16} /><span>{error}</span></div>}
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div style={{ width: 160, height: 160, borderRadius: 12, overflow: 'hidden', background: 'var(--surface-2)', flexShrink: 0, display: 'grid', placeItems: 'center' }}>
+          {thumb ? <img src={thumb} alt={`Face registered by ${student.rollNumber}`} width="160" height="160" /> : <span className="muted">Loading…</span>}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div className="cell-title">{student.name}</div>
+          <div className="cell-sub mono">{student.rollNumber}</div>
+          <p className="muted" style={{ fontSize: '0.85rem', marginTop: '0.6rem' }}>
+            Registered from the student's own phone{student.facePendingAt ? ` on ${formatDate(student.facePendingAt)}` : ''}. Reject lets them register again.
+          </p>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Students() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -157,6 +213,7 @@ export default function Students() {
   const [view, setView] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
   const [enrolling, setEnrolling] = useState(null);
+  const [reviewing, setReviewing] = useState(null);
   const [issued, setIssued] = useState(null);
   const [copied, setCopied] = useState(false);
 
@@ -321,8 +378,12 @@ export default function Students() {
                     <td>
                       {s.isEnrolled ? (
                         <span className="tag tag-present" title={s.embeddingUpdatedAt ? `Updated ${formatDate(s.embeddingUpdatedAt)}` : undefined}>
-                          On file{s.enrollmentSource === 'SELF_SCAN' ? ' · self-scan' : ''}
+                          On file{s.enrollmentSource === 'SELF_SCAN' ? ' · self-scan' : s.enrollmentSource === 'SELF_PHONE' ? ' · own phone' : ''}
                         </span>
+                      ) : s.facePending ? (
+                        <button className="tag tag-flagged" style={{ border: 'none', cursor: 'pointer' }} onClick={() => setReviewing(s)} title="The student registered from their phone; approve it in person">
+                          Face pending · review
+                        </button>
                       ) : (
                         <span className="tag tag-flagged">Not captured</span>
                       )}
@@ -340,7 +401,12 @@ export default function Students() {
                     </td>
                     <td>
                       <div className="row-actions">
-                        <button className={`btn btn-sm ${s.isEnrolled ? 'btn-ghost' : 'btn-secondary'}`} onClick={() => setEnrolling(s)}>
+                        {s.facePending && !s.isEnrolled && (
+                          <button className="btn btn-sm btn-primary" onClick={() => setReviewing(s)}>
+                            <UserCheck size={14} /> Review face
+                          </button>
+                        )}
+                        <button className={`btn btn-sm ${s.isEnrolled || s.facePending ? 'btn-ghost' : 'btn-secondary'}`} onClick={() => setEnrolling(s)}>
                           <Camera size={14} /> {s.isEnrolled ? 'Re-capture' : 'Capture face'}
                         </button>
                         <button className="btn btn-ghost btn-sm btn-icon" onClick={() => resetPassword(s)} title="Reset password" aria-label={`Reset password for ${s.rollNumber}`}>
@@ -371,6 +437,7 @@ export default function Students() {
         />
       )}
       {enrolling && <FaceEnrollModal student={enrolling} onClose={() => setEnrolling(null)} onDone={load} />}
+      {reviewing && <ReviewFaceModal student={reviewing} onClose={() => setReviewing(null)} onDone={load} />}
     </>
   );
 }

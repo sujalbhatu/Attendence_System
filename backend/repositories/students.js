@@ -4,7 +4,7 @@ import { query, isUuid } from '../db/index.js';
 // password_hash and face_embedding are never in this list, so they can't leak into a response
 const PUBLIC_COLUMNS = `id, roll_number, name, email, department, batch, section, photo_url,
   is_enrolled, enrolled_at, enrollment_source, embedding_version, embedding_updated_at, must_change_password, created_at,
-  (password_hash IS NOT NULL) AS can_sign_in`;
+  (password_hash IS NOT NULL) AS can_sign_in, (face_pending IS NOT NULL) AS face_pending, face_pending_at`;
 
 export const toStudent = (r) => r && ({
   _id: r.id,
@@ -23,6 +23,10 @@ export const toStudent = (r) => r && ({
   embeddingUpdatedAt: r.embedding_updated_at,
   mustChangePassword: r.must_change_password,
   canSignIn: r.can_sign_in,
+  facePending: !!r.face_pending,
+  facePendingAt: r.face_pending_at,
+  // NONE: nothing yet, PENDING: self-registered and waiting for faculty, ENROLLED: ready for check-in
+  faceStatus: r.is_enrolled ? 'ENROLLED' : r.face_pending ? 'PENDING' : 'NONE',
   createdAt: r.created_at
 });
 
@@ -104,7 +108,8 @@ export async function enrollFaceEmbedding(id, embedding, source = 'FACULTY', db 
   const { rows } = await db.query(
     `UPDATE students
      SET face_embedding = $2, is_enrolled = true, enrolled_at = now(), enrollment_source = $3,
-         embedding_version = 1, embedding_updated_at = now()
+         embedding_version = 1, embedding_updated_at = now(),
+         face_pending = NULL, face_pending_thumb = NULL, face_pending_at = NULL
      WHERE id = $1 RETURNING ${PUBLIC_COLUMNS}`,
     [id, embedding, source]
   );
@@ -119,6 +124,53 @@ export async function updateFaceEmbedding(id, embedding, db = { query }) {
     [id, embedding]
   );
   return rows[0]?.embedding_version;
+}
+
+/**
+ * Saves a phone self-registration for faculty approval. Only works once: not if the
+ * student already has a face on file, and not while an earlier one is still pending.
+ */
+export async function submitPendingFace(id, embedding, thumb) {
+  const { rows } = await query(
+    `UPDATE students SET face_pending = $2, face_pending_thumb = $3, face_pending_at = now()
+     WHERE id = $1 AND NOT is_enrolled AND face_pending IS NULL
+     RETURNING ${PUBLIC_COLUMNS}`,
+    [id, embedding, thumb]
+  );
+  return toStudent(rows[0]);
+}
+
+export async function getPendingFaceThumb(id) {
+  if (!isUuid(id)) return null;
+  const { rows } = await query('SELECT face_pending_thumb FROM students WHERE id = $1 AND face_pending IS NOT NULL', [id]);
+  return rows[0] ? rows[0].face_pending_thumb || '' : null;
+}
+
+// Faculty approves in person: the pending face becomes the check-in template
+export async function approvePendingFace(id) {
+  if (!isUuid(id)) return null;
+  const { rows } = await query(
+    `UPDATE students
+     SET face_embedding = face_pending, is_enrolled = true, enrolled_at = now(), enrollment_source = 'SELF_PHONE',
+         embedding_version = 1, embedding_updated_at = now(),
+         face_pending = NULL, face_pending_thumb = NULL, face_pending_at = NULL
+     WHERE id = $1 AND face_pending IS NOT NULL
+     RETURNING ${PUBLIC_COLUMNS}`,
+    [id]
+  );
+  return toStudent(rows[0]);
+}
+
+// Faculty rejects: the student may register again
+export async function rejectPendingFace(id) {
+  if (!isUuid(id)) return null;
+  const { rows } = await query(
+    `UPDATE students SET face_pending = NULL, face_pending_thumb = NULL, face_pending_at = NULL
+     WHERE id = $1 AND face_pending IS NOT NULL
+     RETURNING ${PUBLIC_COLUMNS}`,
+    [id]
+  );
+  return toStudent(rows[0]);
 }
 
 export async function deleteStudent(id) {

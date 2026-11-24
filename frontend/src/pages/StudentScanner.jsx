@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Camera, CheckCircle2, MapPin, RefreshCw, ShieldAlert, Clock, ArrowLeft, LogOut } from 'lucide-react';
+import { Camera, CheckCircle2, MapPin, RefreshCw, ShieldAlert, Clock, ArrowLeft, LogOut, UserCheck } from 'lucide-react';
 import api from '../api/client';
 import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
@@ -62,12 +62,14 @@ export default function StudentScanner() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [shotsTaken, setShotsTaken] = useState(0);
 
   const qrScannerRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   useEffect(() => {
+    if (loadStudentToken()) refreshMe(loadStudentToken());
     requestGpsLocation();
     return () => {
       stopQrScanner();
@@ -109,7 +111,7 @@ export default function StudentScanner() {
         setStep('SET_PASSWORD');
       } else {
         setLoginPassword('');
-        setStep('INIT');
+        goToNextStep(res.data.student);
       }
     } catch (err) {
       setErrorMessage(err.response?.data?.error || 'Login failed');
@@ -133,7 +135,7 @@ export default function StudentScanner() {
       setStudent(res.data.student);
       setLoginPassword('');
       setNewPassword('');
-      setStep('INIT');
+      goToNextStep(res.data.student);
     } catch (err) {
       if (err.response?.status === 401 && err.response?.data?.code === 'LOGIN_REQUIRED') {
         handleLogout();
@@ -146,8 +148,104 @@ export default function StudentScanner() {
     }
   };
 
+  // New students register their own face first; pending ones wait for faculty approval
+  const goToNextStep = (s) => {
+    const status = s?.faceStatus;
+    if (status === 'NONE') startFaceRegistration();
+    else if (status === 'PENDING') setStep('FACE_PENDING');
+    else setStep('INIT');
+  };
+
+  const refreshMe = async (token = studentToken) => {
+    if (!token) return;
+    try {
+      const res = await api.get('/student-portal/me', { headers: studentAuthHeaders(token) });
+      setStudent(res.data.student);
+      saveStudentSession(token, res.data.student);
+      goToNextStep(res.data.student);
+    } catch (err) {
+      handleAuthError(err);
+    }
+  };
+
+  const startFaceRegistration = () => {
+    setErrorMessage('');
+    setShotsTaken(0);
+    setStep('REGISTER_FACE');
+    setTimeout(async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } });
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch (err) {
+        setErrorMessage('Unable to open the front camera: ' + err.message);
+      }
+    }, 150);
+  };
+
+  // 3 photos about 0.8 s apart, cropped exactly like the check-in frames (320x320 centre square)
+  const captureRegistration = async () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      setErrorMessage('The camera is not ready yet. Allow camera access and try again.');
+      return;
+    }
+    setIsSubmitting(true);
+    setIsCapturing(true);
+    setErrorMessage('');
+    const canvas = canvasRef.current || document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const shots = [];
+    let thumb = '';
+    try {
+      for (let i = 0; i < 3; i++) {
+        const minDim = Math.min(video.videoWidth, video.videoHeight);
+        const sx = (video.videoWidth - minDim) / 2;
+        const sy = (video.videoHeight - minDim) / 2;
+        canvas.width = 320;
+        canvas.height = 320;
+        ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, 320, 320);
+        shots.push(await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.9)));
+        if (i === 1) {
+          canvas.width = 160;
+          canvas.height = 160;
+          ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, 160, 160);
+          thumb = canvas.toDataURL('image/jpeg', 0.7);
+        }
+        setShotsTaken(i + 1);
+        if (i < 2) await new Promise((r) => setTimeout(r, 800));
+      }
+    } finally {
+      setIsCapturing(false);
+    }
+
+    const formData = new FormData();
+    shots.forEach((blob, idx) => formData.append('images', blob, `face_${idx}.jpg`));
+    formData.append('thumb', thumb);
+    try {
+      const res = await api.post('/student-portal/register-face', formData, {
+        headers: { ...studentAuthHeaders(studentToken), 'Content-Type': 'multipart/form-data' }
+      });
+      video.srcObject?.getTracks().forEach((t) => t.stop());
+      setStudent(res.data.student);
+      saveStudentSession(studentToken, res.data.student);
+      setStep('FACE_PENDING');
+    } catch (err) {
+      if (handleAuthError(err)) return;
+      if (err.response?.data?.code === 'FACE_PENDING') {
+        video.srcObject?.getTracks().forEach((t) => t.stop());
+        setStep('FACE_PENDING');
+        return;
+      }
+      setShotsTaken(0);
+      setErrorMessage(err.response?.data?.error || 'Could not register your face. Try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleLogout = () => {
     stopQrScanner();
+    videoRef.current?.srcObject?.getTracks().forEach((t) => t.stop());
     clearStudentSession();
     setStudentToken(null);
     setStudent(null);
@@ -347,6 +445,10 @@ export default function StudentScanner() {
       setStep('SUCCESS');
     } catch (err) {
       if (handleAuthError(err)) return;
+      if (err.response?.data?.code === 'FACE_PENDING') {
+        setStep('FACE_PENDING');
+        return;
+      }
       setErrorMessage(err.response?.data?.error || 'Face verification failed');
       setStep('ERROR');
     } finally {
@@ -370,7 +472,7 @@ export default function StudentScanner() {
         </div>
       </div>
 
-      {signedIn && step !== 'ERROR' && (
+      {signedIn && !['ERROR', 'REGISTER_FACE', 'FACE_PENDING'].includes(step) && (
         <>
           <div style={{ marginBottom: '0.9rem' }}>
             <div className="eyebrow">Checking in as</div>
@@ -451,6 +553,43 @@ export default function StudentScanner() {
           <button type="submit" disabled={isSubmitting} className="btn btn-primary btn-lg btn-block">{isSubmitting ? 'Saving…' : 'Save and continue'}</button>
           <button type="button" onClick={handleLogout} className="btn btn-ghost btn-block" style={{ marginTop: '0.5rem' }}>Use a different account</button>
         </form>
+      )}
+
+      {step === 'REGISTER_FACE' && (
+        <div className="panel scan-card" style={{ textAlign: 'center' }}>
+          <div className="eyebrow">One-time setup · {rollNumber}</div>
+          <h2 style={{ marginTop: '0.3rem' }}>Register your face</h2>
+          <p>Do this in front of your faculty. Hold the phone at eye level in good light, face inside the circle, then tap the button. It takes 3 photos.</p>
+          {errorMessage && <div className="alert alert-error" style={{ marginTop: '1rem', textAlign: 'left' }}><ShieldAlert size={16} /><span>{errorMessage}</span></div>}
+          <div className={`face-ring ${isCapturing ? 'capturing' : ''}`}>
+            <video ref={videoRef} autoPlay playsInline muted />
+            {isCapturing && (
+              <div className="face-overlay">
+                Photo {Math.min(shotsTaken + 1, 3)} of 3
+                <small>hold still</small>
+              </div>
+            )}
+          </div>
+          <canvas ref={canvasRef} hidden />
+          <button onClick={captureRegistration} disabled={isSubmitting} className="btn btn-primary btn-lg btn-block" style={{ marginTop: '1.5rem' }}>
+            <Camera size={18} /> {isCapturing ? `Taking photos… ${shotsTaken}/3` : isSubmitting ? 'Saving your face…' : 'Take 3 photos'}
+          </button>
+        </div>
+      )}
+
+      {step === 'FACE_PENDING' && (
+        <div className="panel scan-card" style={{ textAlign: 'center' }}>
+          <div className="result-icon wait"><UserCheck size={26} /></div>
+          <h2>Show this to your faculty</h2>
+          <p>
+            Your face is registered from this phone. Your faculty now approves it on the Students page
+            (they will see your photo). After that you can check in.
+          </p>
+          <div className="mono" style={{ marginTop: '0.75rem', fontWeight: 600 }}>{student?.name} · {rollNumber}</div>
+          <button onClick={() => refreshMe()} className="btn btn-primary btn-lg btn-block" style={{ marginTop: '1.5rem' }}>
+            <RefreshCw size={16} /> Approved? Continue
+          </button>
+        </div>
       )}
 
       {step === 'INIT' && (

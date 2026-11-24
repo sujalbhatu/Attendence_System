@@ -7,7 +7,10 @@ import {
   createStudent as insertStudent,
   setStudentPassword,
   enrollFaceEmbedding,
-  deleteStudent as removeStudent
+  deleteStudent as removeStudent,
+  getPendingFaceThumb,
+  approvePendingFace,
+  rejectPendingFace
 } from '../repositories/students.js';
 import axios from 'axios';
 import FormData from 'form-data';
@@ -147,6 +150,37 @@ export const deleteStudent = async (req, res) => {
   try {
     await removeStudent(req.params.id);
     res.json({ message: 'Student removed' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Faculty reviews a phone self-registration in person: preview, then approve or reject
+export const getPendingFace = async (req, res) => {
+  try {
+    const thumb = await getPendingFaceThumb(req.params.studentId);
+    if (thumb === null) return res.status(404).json({ error: 'No face is waiting for approval' });
+    res.json({ thumb });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const approveFace = async (req, res) => {
+  try {
+    const student = await approvePendingFace(req.params.studentId);
+    if (!student) return res.status(404).json({ error: 'No face is waiting for approval' });
+    res.json({ message: 'Face approved', student });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const rejectFace = async (req, res) => {
+  try {
+    const student = await rejectPendingFace(req.params.studentId);
+    if (!student) return res.status(404).json({ error: 'No face is waiting for approval' });
+    res.json({ message: 'Face rejected; the student can register again', student });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

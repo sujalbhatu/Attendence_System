@@ -3,8 +3,12 @@ import {
   verifyStudentPassword,
   markMustChangePassword,
   checkStudentPassword,
-  setStudentPassword
+  setStudentPassword,
+  findStudentById,
+  submitPendingFace
 } from '../repositories/students.js';
+import { embedUploadedFaces } from '../services/faceEmbed.js';
+import fs from 'fs';
 import { studentCourseStats, activeEnrollmentBranches } from '../repositories/courses.js';
 import { studentCourseRecords } from '../repositories/attendance.js';
 import { JWT_SECRET } from '../config.js';
@@ -27,7 +31,8 @@ const publicStudent = (student) => ({
   rollNumber: student.rollNumber,
   name: student.name,
   email: student.email,
-  isEnrolled: student.isEnrolled
+  isEnrolled: student.isEnrolled,
+  faceStatus: student.faceStatus
 });
 
 export const studentLogin = async (req, res) => {
@@ -77,6 +82,65 @@ export const changePassword = async (req, res) => {
     const updated = await setStudentPassword(student.id, String(newPassword), { mustChangePassword: false });
     res.json({ token: signStudentToken(updated), mustChangePassword: false, student: publicStudent(updated) });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Fresh account state for the phone (face status changes when faculty approves)
+export const getMe = async (req, res) => {
+  try {
+    const student = await findStudentById(req.student.id);
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+    res.json({ student: publicStudent(student) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const THUMB_PREFIX = 'data:image/jpeg;base64,';
+const MAX_THUMB_CHARS = 60000; // ~45 KB image
+
+/**
+ * First-login face registration from the student's own phone. Saved as PENDING:
+ * check-ins stay blocked until faculty approves it in person on the Students page.
+ */
+export const registerOwnFace = async (req, res) => {
+  const files = req.files || [];
+  const discard = () => files.forEach((f) => fs.unlink(f.path, () => {}));
+  try {
+    const student = await findStudentById(req.student.id);
+    if (!student) { discard(); return res.status(404).json({ error: 'Student not found' }); }
+    if (student.faceStatus !== 'NONE') {
+      discard();
+      return res.status(409).json({
+        code: student.faceStatus === 'PENDING' ? 'FACE_PENDING' : 'FACE_ALREADY_ENROLLED',
+        error: student.faceStatus === 'PENDING'
+          ? 'Your face is already registered and waiting for your faculty to approve it.'
+          : 'Your face is already on file. Ask your faculty if it needs to be captured again.'
+      });
+    }
+    if (files.length < 3) {
+      discard();
+      return res.status(400).json({ error: 'Take 3 photos of your face.' });
+    }
+    const thumb = String(req.body.thumb || '');
+    if (!thumb.startsWith(THUMB_PREFIX) || thumb.length > MAX_THUMB_CHARS) {
+      discard();
+      return res.status(400).json({ error: 'Missing or invalid preview image.' });
+    }
+
+    let embedding;
+    try {
+      embedding = await embedUploadedFaces(files); // deletes the uploads
+    } catch {
+      return res.status(502).json({ error: 'Could not read your face. Try again in good light, face centred.' });
+    }
+
+    const saved = await submitPendingFace(student.id, embedding, thumb);
+    if (!saved) return res.status(409).json({ error: 'Your face was already registered.' });
+    res.status(201).json({ student: publicStudent(saved) });
+  } catch (err) {
+    discard();
     res.status(500).json({ error: err.message });
   }
 };

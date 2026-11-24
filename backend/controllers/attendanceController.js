@@ -4,7 +4,7 @@ import { findOwnedSession } from '../repositories/sessions.js';
 import { getActiveSession } from '../services/sessionCache.js';
 import { publishSessionEvent } from '../services/liveEvents.js';
 import { verifyFace } from '../services/verifyQueue.js';
-import { getFaceEmbedding } from '../repositories/students.js';
+import { getFaceEmbedding, findStudentById } from '../repositories/students.js';
 import {
   hasAttendanceRecord,
   startClaim,
@@ -249,6 +249,13 @@ export const verifyBiometrics = async (req, res) => {
     }
 
     const wasEnrolled = Array.isArray(storedEmbedding) && storedEmbedding.length > 0;
+    if (!wasEnrolled && (await findStudentById(student.id))?.faceStatus === 'PENDING') {
+      cleanupUploads();
+      return res.status(400).json({
+        code: 'FACE_PENDING',
+        error: 'Your face is registered but not approved yet. Ask your faculty to approve it on the Students page, then try again.'
+      });
+    }
     if (!wasEnrolled && !ALLOW_SELF_ENROLLMENT) {
       cleanupUploads();
       return res.status(400).json({
