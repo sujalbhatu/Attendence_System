@@ -4,6 +4,12 @@ import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import AuthLayout from '../components/AuthLayout';
 
+// Optional demo account, filled in at build time (frontend/.env.production.local).
+// The button only appears when both values are set.
+const DEMO_EMAIL = import.meta.env.VITE_DEMO_EMAIL || '';
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD || '';
+const HAS_DEMO = Boolean(DEMO_EMAIL && DEMO_PASSWORD);
+
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -67,6 +73,16 @@ export default function Login() {
         <button type="submit" disabled={loading} className="btn btn-primary btn-lg btn-block" style={{ marginTop: '0.5rem' }}>
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
+        {HAS_DEMO && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-block"
+            style={{ marginTop: '0.6rem' }}
+            onClick={() => { setEmail(DEMO_EMAIL); setPassword(DEMO_PASSWORD); setError(''); }}
+          >
+            Use demo account
+          </button>
+        )}
       </form>
 
       <div className="divider" style={{ margin: '1.75rem 0 1.25rem' }} />

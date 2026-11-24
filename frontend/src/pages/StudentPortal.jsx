@@ -6,6 +6,7 @@ import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
 import { formatDay, formatTime } from '../lib/format';
 import { loadStudentToken, loadStudentData, saveStudentSession, clearStudentSession, studentAuthHeaders } from '../api/studentSession';
+import { DEMO_STUDENT_ROLL, DEMO_STUDENT_PASSWORD, HAS_DEMO_STUDENT } from '../lib/demo';
 
 const THRESHOLD = 0.75;
 
@@ -236,6 +237,16 @@ export default function StudentPortal() {
                 <span className="hint">First time? Use the temporary password from your faculty.</span>
               </div>
               <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
+              {HAS_DEMO_STUDENT && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-block"
+                  style={{ marginTop: '0.6rem' }}
+                  onClick={() => { setRollNumber(DEMO_STUDENT_ROLL.toUpperCase()); setPassword(DEMO_STUDENT_PASSWORD); setError(''); }}
+                >
+                  Use demo account
+                </button>
+              )}
             </form>
           )}
         </div>

@@ -6,6 +6,7 @@ import api from '../api/client';
 import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
 import { loadStudentToken, loadStudentData, saveStudentSession, clearStudentSession, studentAuthHeaders } from '../api/studentSession';
+import { DEMO_STUDENT_ROLL, DEMO_STUDENT_PASSWORD, HAS_DEMO_STUDENT } from '../lib/demo';
 
 const STEP_INDEX = { INIT: 0, SCANNING_QR: 0, ENTER_PIN: 1, CLAIM_CONFIRMED: 2, FACE_VERIFY: 2, SUCCESS: 3, ERROR: -1 };
 
@@ -418,6 +419,16 @@ export default function StudentScanner() {
           <button type="submit" disabled={isSubmitting} className="btn btn-primary btn-lg btn-block">
             {isSubmitting ? 'Signing in…' : 'Sign in'}
           </button>
+          {HAS_DEMO_STUDENT && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-block"
+              style={{ marginTop: '0.6rem' }}
+              onClick={() => { setLoginRoll(DEMO_STUDENT_ROLL.toUpperCase()); setLoginPassword(DEMO_STUDENT_PASSWORD); setErrorMessage(''); }}
+            >
+              Use demo account
+            </button>
+          )}
           <p className="hint" style={{ marginTop: '1rem', textAlign: 'center' }}>
             First time? You’ll be asked to choose your own password.
           </p>
