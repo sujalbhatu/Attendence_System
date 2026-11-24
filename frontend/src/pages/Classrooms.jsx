@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Crosshair, DoorOpen, MapPin, Archive, AlertCircle } from 'lucide-react';
+import { Plus, Crosshair, DoorOpen, MapPin, Archive, AlertCircle, Pencil } from 'lucide-react';
 import api from '../api/client';
 import Modal from '../components/Modal';
 import { errorText } from '../lib/format';
@@ -148,10 +148,128 @@ function AddClassroomModal({ onClose, onSaved }) {
   );
 }
 
+const RADIUS_MIN = 10;
+const RADIUS_MAX = 2000;
+
+function EditClassroomModal({ room, onClose, onSaved }) {
+  const [radiusMeters, setRadiusMeters] = useState(Math.round(room.radiusMeters || 35));
+  const [latitude, setLatitude] = useState(String(room.latitude));
+  const [longitude, setLongitude] = useState(String(room.longitude));
+  const [accuracy, setAccuracy] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const locate = () => {
+    if (!navigator.geolocation) {
+      setError('This browser cannot read your location.');
+      return;
+    }
+    setLocating(true);
+    setError('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLatitude(pos.coords.latitude.toFixed(6));
+        setLongitude(pos.coords.longitude.toFixed(6));
+        setAccuracy(Math.round(pos.coords.accuracy));
+        setLocating(false);
+      },
+      (err) => {
+        setError(`Could not get your location: ${err.message}`);
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const r = Number(radiusMeters);
+    if (!Number.isFinite(r) || r < RADIUS_MIN || r > RADIUS_MAX) {
+      setError(`Radius must be between ${RADIUS_MIN} and ${RADIUS_MAX} m.`);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await api.put(`/classrooms/${room._id}`, { radiusMeters: r, latitude: Number(latitude), longitude: Number(longitude) });
+      onSaved();
+    } catch (err) {
+      setError(errorText(err, 'Could not save the changes'));
+      setSaving(false);
+    }
+  };
+
+  const moved = latitude !== String(room.latitude) || longitude !== String(room.longitude);
+
+  return (
+    <Modal
+      title={`Edit ${room.roomCode}`}
+      description="Change the check-in radius, or stand in the room and re-centre it on your location."
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" form="edit-room" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+        </>
+      }
+    >
+      <form id="edit-room" onSubmit={submit}>
+        {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}><AlertCircle size={16} /><span>{error}</span></div>}
+
+        <div className="field">
+          <div className="label-row">
+            <label className="label" htmlFor="edit-rad">Geofence radius</label>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <input
+                type="number"
+                className="input mono"
+                aria-label="Radius in metres"
+                min={RADIUS_MIN}
+                max={RADIUS_MAX}
+                value={radiusMeters}
+                onChange={(e) => setRadiusMeters(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                style={{ width: '6rem', padding: '0.3rem 0.5rem' }}
+              />
+              <span className="mono" style={{ fontSize: '0.85rem' }}>m</span>
+            </span>
+          </div>
+          <input
+            id="edit-rad"
+            type="range"
+            min="15"
+            max="100"
+            step="5"
+            value={Math.min(100, Math.max(15, Number(radiusMeters) || 15))}
+            onChange={(e) => setRadiusMeters(parseInt(e.target.value, 10))}
+          />
+          <span className="hint">Slider covers 15–100 m; type any value from {RADIUS_MIN} to {RADIUS_MAX} m in the box.</span>
+        </div>
+
+        <div className="field" style={{ marginBottom: 0 }}>
+          <div className="label-row">
+            <span className="label">Centre</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={locate} disabled={locating}>
+              <Crosshair size={14} className={locating ? 'spin' : ''} /> {locating ? 'Locating…' : 'Use my current location'}
+            </button>
+          </div>
+          <div className="field-row">
+            <input className="input mono" aria-label="Latitude" value={latitude} onChange={(e) => setLatitude(e.target.value)} required />
+            <input className="input mono" aria-label="Longitude" value={longitude} onChange={(e) => setLongitude(e.target.value)} required />
+          </div>
+          {accuracy != null && <span className="hint">Your phone reported ±{accuracy} m. Pick a radius larger than that.</span>}
+          {moved && accuracy == null && <span className="hint">The centre will move to these coordinates.</span>}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function Classrooms() {
   const [classrooms, setClassrooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const load = () =>
     api.get('/classrooms')
@@ -222,6 +340,9 @@ export default function Classrooms() {
                 >
                   <MapPin size={14} /> View on map
                 </a>
+                <button className="btn btn-ghost btn-sm" onClick={() => setEditing(c)}>
+                  <Pencil size={14} /> Edit
+                </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => archive(c)}>
                   <Archive size={14} /> Archive
                 </button>
@@ -232,6 +353,7 @@ export default function Classrooms() {
       )}
 
       {showAdd && <AddClassroomModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
+      {editing && <EditClassroomModal room={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
     </>
   );
 }
