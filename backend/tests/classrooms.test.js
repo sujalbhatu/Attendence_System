@@ -71,6 +71,35 @@ describe('PUT /api/classrooms/:id', () => {
   });
 });
 
+describe('POST /api/classrooms', () => {
+  const create = async (body) => request(app).post('/api/classrooms')
+    .set({ Authorization: `Bearer ${facultyToken(await makeFaculty())}` })
+    .send({ roomCode: 'L-901', building: 'Main', latitude: 22.776, longitude: 86.143, ...body });
+
+  test('saves a custom radius', async () => {
+    const res = await create({ radiusMeters: 250 });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.classroom.radiusMeters, 250);
+  });
+
+  test('defaults to 35 m when no radius is sent', async () => {
+    const res = await create({});
+    assert.equal(res.status, 201);
+    assert.equal(res.body.classroom.radiusMeters, 35);
+  });
+
+  for (const [name, body] of [
+    ['a radius below 10 m', { radiusMeters: 5 }],
+    ['a radius above 2000 m', { radiusMeters: 5000 }],
+    ['a latitude out of range', { latitude: 120 }],
+  ]) {
+    test(`rejects ${name} with 400`, async () => {
+      const res = await create(body);
+      assert.equal(res.status, 400);
+    });
+  }
+});
+
 describe('validateClassroomChanges', () => {
   test('accepts the range limits themselves', () => {
     assert.deepEqual(validateClassroomChanges({ radiusMeters: 10, latitude: -90, longitude: 180 }).changes,

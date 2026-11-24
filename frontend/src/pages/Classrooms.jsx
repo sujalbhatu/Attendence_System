@@ -39,6 +39,50 @@ function RoomMap({ room }) {
   );
 }
 
+const RADIUS_MIN = 10;
+const RADIUS_MAX = 2000;
+
+const radiusError = (value) => {
+  const r = Number(value);
+  return value === '' || !Number.isFinite(r) || r < RADIUS_MIN || r > RADIUS_MAX
+    ? `Radius must be between ${RADIUS_MIN} and ${RADIUS_MAX} m.`
+    : '';
+};
+
+// Geofence radius: a 15-100 m slider for the usual room sizes, plus a box for any 10-2000 m value
+function RadiusInput({ id, value, onChange }) {
+  return (
+    <>
+      <div className="label-row">
+        <label className="label" htmlFor={id}>Geofence radius</label>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <input
+            type="number"
+            className="input mono"
+            aria-label="Radius in metres"
+            min={RADIUS_MIN}
+            max={RADIUS_MAX}
+            value={value}
+            onChange={(e) => onChange(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+            style={{ width: '6rem', padding: '0.3rem 0.5rem' }}
+          />
+          <span className="mono" style={{ fontSize: '0.85rem' }}>m</span>
+        </span>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min="15"
+        max="100"
+        step="5"
+        value={Math.min(100, Math.max(15, Number(value) || 15))}
+        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+      />
+      <span className="hint">Slider covers 15–100 m; type any value from {RADIUS_MIN} to {RADIUS_MAX} m in the box.</span>
+    </>
+  );
+}
+
 function AddClassroomModal({ onClose, onSaved }) {
   const [roomCode, setRoomCode] = useState('');
   const [building, setBuilding] = useState('Main Academic Block');
@@ -76,10 +120,15 @@ function AddClassroomModal({ onClose, onSaved }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    const bad = radiusError(radiusMeters);
+    if (bad) {
+      setError(bad);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
-      await api.post('/classrooms', { roomCode, building, floor, capacity, latitude, longitude, radiusMeters });
+      await api.post('/classrooms', { roomCode, building, floor, capacity, latitude, longitude, radiusMeters: Number(radiusMeters) });
       onSaved();
     } catch (err) {
       setError(errorText(err, 'Could not save the classroom'));
@@ -137,19 +186,13 @@ function AddClassroomModal({ onClose, onSaved }) {
         </div>
 
         <div className="field" style={{ marginBottom: 0 }}>
-          <div className="label-row">
-            <label className="label" htmlFor="rad">Geofence radius</label>
-            <span className="mono" style={{ fontSize: '0.85rem' }}>{radiusMeters} m</span>
-          </div>
-          <input id="rad" type="range" min="15" max="100" step="5" value={radiusMeters} onChange={(e) => setRadiusMeters(parseInt(e.target.value, 10))} />
+          <RadiusInput id="rad" value={radiusMeters} onChange={setRadiusMeters} />
         </div>
       </form>
     </Modal>
   );
 }
 
-const RADIUS_MIN = 10;
-const RADIUS_MAX = 2000;
 
 function EditClassroomModal({ room, onClose, onSaved }) {
   const [radiusMeters, setRadiusMeters] = useState(Math.round(room.radiusMeters || 35));
@@ -184,15 +227,15 @@ function EditClassroomModal({ room, onClose, onSaved }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    const r = Number(radiusMeters);
-    if (!Number.isFinite(r) || r < RADIUS_MIN || r > RADIUS_MAX) {
-      setError(`Radius must be between ${RADIUS_MIN} and ${RADIUS_MAX} m.`);
+    const bad = radiusError(radiusMeters);
+    if (bad) {
+      setError(bad);
       return;
     }
     setSaving(true);
     setError('');
     try {
-      await api.put(`/classrooms/${room._id}`, { radiusMeters: r, latitude: Number(latitude), longitude: Number(longitude) });
+      await api.put(`/classrooms/${room._id}`, { radiusMeters: Number(radiusMeters), latitude: Number(latitude), longitude: Number(longitude) });
       onSaved();
     } catch (err) {
       setError(errorText(err, 'Could not save the changes'));
@@ -218,32 +261,7 @@ function EditClassroomModal({ room, onClose, onSaved }) {
         {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}><AlertCircle size={16} /><span>{error}</span></div>}
 
         <div className="field">
-          <div className="label-row">
-            <label className="label" htmlFor="edit-rad">Geofence radius</label>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <input
-                type="number"
-                className="input mono"
-                aria-label="Radius in metres"
-                min={RADIUS_MIN}
-                max={RADIUS_MAX}
-                value={radiusMeters}
-                onChange={(e) => setRadiusMeters(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                style={{ width: '6rem', padding: '0.3rem 0.5rem' }}
-              />
-              <span className="mono" style={{ fontSize: '0.85rem' }}>m</span>
-            </span>
-          </div>
-          <input
-            id="edit-rad"
-            type="range"
-            min="15"
-            max="100"
-            step="5"
-            value={Math.min(100, Math.max(15, Number(radiusMeters) || 15))}
-            onChange={(e) => setRadiusMeters(parseInt(e.target.value, 10))}
-          />
-          <span className="hint">Slider covers 15–100 m; type any value from {RADIUS_MIN} to {RADIUS_MAX} m in the box.</span>
+          <RadiusInput id="edit-rad" value={radiusMeters} onChange={setRadiusMeters} />
         </div>
 
         <div className="field" style={{ marginBottom: 0 }}>

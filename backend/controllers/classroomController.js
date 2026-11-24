@@ -21,6 +21,8 @@ export const createClassroom = async (req, res) => {
     if (!roomCode || !building || latitude === undefined || longitude === undefined) {
       return res.status(400).json({ error: 'roomCode, building, latitude and longitude are required' });
     }
+    const { error: badValue } = validateClassroomChanges({ latitude, longitude, radiusMeters });
+    if (badValue) return res.status(400).json({ error: badValue });
     const existing = await findClassroomByCode(String(roomCode));
     if (existing) {
       return res.status(400).json({ error: 'Classroom with this room code already exists' });
