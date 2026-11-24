@@ -40,6 +40,9 @@ export const PIN_GRACE_MS = intEnv('PIN_GRACE_MS', 2000);
 export const PIN_WINDOW_MS = intEnv('PIN_WINDOW_MS', 15000); // time allowed to tap the PIN after scanning
 export const MAX_PIN_ATTEMPTS = intEnv('MAX_PIN_ATTEMPTS', 2);
 export const CLAIM_TTL_MS = intEnv('CLAIM_TTL_MS', 60000);
+// How often expired claims are deleted. Keep it well above Neon's 5-minute
+// scale-to-zero delay so an idle database can suspend between lectures.
+export const CLAIM_CLEANUP_MINUTES = Math.max(10, intEnv('CLAIM_CLEANUP_MINUTES', 60));
 
 // First-scan self-enrollment by a logged-in student. The record is saved as FLAGGED
 // so faculty can review it. Off by default: faculty-supervised enrollment only.

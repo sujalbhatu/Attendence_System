@@ -1,4 +1,4 @@
-import { SEED_DEMO } from './config.js'; // loads .env and fails fast on missing secrets
+import { SEED_DEMO, CLAIM_CLEANUP_MINUTES } from './config.js'; // loads .env and fails fast on missing secrets
 import { createApp } from './app.js';
 import { getPool } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -7,7 +7,10 @@ import { seedDemoData } from './db/seed.js';
 import { deleteExpiredClaims } from './repositories/attendance.js';
 
 const PORT = process.env.PORT || 3001;
-const CLAIM_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+// Hourly, not every few minutes: on Neon a query every 5 minutes stops the database from
+// ever suspending, which used up the free plan's compute hours. Reads already ignore
+// expired claims, so this sweep only keeps the table small.
+const CLAIM_CLEANUP_INTERVAL_MS = CLAIM_CLEANUP_MINUTES * 60 * 1000;
 
 async function start() {
   await getPool().query('SELECT 1');
